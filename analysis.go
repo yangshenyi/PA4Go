@@ -83,6 +83,13 @@ func Analyze(prog_ *ssa.Program, log_ io.Writer, mains_ []*ssa.Package) (result 
 		a.log = os.Stderr // for debugging crashes; extremely verbose
 	}
 
+	if reflect := a.prog.ImportedPackage("reflect"); reflect != nil {
+		panic("reflect not support")
+	}
+	if runtime := a.prog.ImportedPackage("runtime"); runtime != nil {
+		panic("runtime not support")
+	}
+
 	if a.log != nil {
 		fmt.Fprintln(a.log, "==== Starting analysis")
 	}
