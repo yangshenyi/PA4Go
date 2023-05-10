@@ -2,7 +2,6 @@ package pa
 
 import (
 	"fmt"
-	"go/token"
 	"go/types"
 	"io"
 	"os"
@@ -90,12 +89,13 @@ func Analyze(prog_ *ssa.Program, log_ io.Writer, mains_ []*ssa.Package) (result 
 
 	a.solve()
 
-	return a.CallGraph, nil
-}
-
-func (a *analysis) warningLog(pos token.Pos, format string, args ...interface{}) {
-	msg := fmt.Sprintf(format, args...)
-	if a.log != nil {
-		fmt.Fprintf(a.log, "%s: warning: %s\n", a.prog.Fset.Position(pos), msg)
+	for f1, call := range a.callgraph {
+		for callinstr, f2set := range call {
+			for f2 := range f2set {
+				callgraph.AddEdge(a.CallGraph.CreateNode(f1), callinstr, a.CallGraph.CreateNode(f2))
+			}
+		}
 	}
+
+	return a.CallGraph, nil
 }
