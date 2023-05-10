@@ -1,7 +1,6 @@
 package pa
 
 import (
-	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -19,39 +18,40 @@ const level int = 1
 // call-free functions).  This is just a starting point.
 // define whether a function should be treated with context sensitivity
 func selectiveContextPolicy(fn *ssa.Function) bool {
-	if len(fn.Blocks) != 1 {
-		return false // too expensive
-	}
-	blk := fn.Blocks[0]
-	if len(blk.Instrs) > 10 {
-		return false // too expensive
-	}
-	if fn.Synthetic != "" && (fn.Pkg == nil || fn != fn.Pkg.Func("init")) {
-		return true // treat synthetic wrappers context-sensitively
-	}
-	for _, instr := range blk.Instrs {
-		switch instr := instr.(type) {
-		case ssa.CallInstruction:
-			// Disallow function calls (except to built-ins)
-			// because of the danger of unbounded recursion.
-			if _, ok := instr.Common().Value.(*ssa.Builtin); !ok {
-				return false
-			}
+	/*
+		if len(fn.Blocks) != 1 {
+			return false // too expensive
 		}
-	}
+		blk := fn.Blocks[0]
+		if len(blk.Instrs) > 10 {
+			return false // too expensive
+		}
+		if fn.Synthetic != "" && (fn.Pkg == nil || fn != fn.Pkg.Func("init")) {
+			return true // treat synthetic wrappers context-sensitively
+		}
+		for _, instr := range blk.Instrs {
+			switch instr := instr.(type) {
+			case ssa.CallInstruction:
+				// Disallow function calls (except to built-ins)
+				// because of the danger of unbounded recursion.
+				if _, ok := instr.Common().Value.(*ssa.Builtin); !ok {
+					return false
+				}
+			}
+		}*/
 	return true
 }
 
 type context struct {
-	callstring [level]*ssa.CallInstruction
+	callstring [level]ssa.CallInstruction
 }
 
 func NewContext() context {
-	return context{[level]*ssa.CallInstruction{}}
+	return context{[level]ssa.CallInstruction{}}
 }
 
-func (*context) GenContext(caller_context context, l *ssa.CallInstruction) context {
-	var new_context [level]*ssa.CallInstruction
+func (caller_context context) GenContext(l ssa.CallInstruction) context {
+	var new_context [level]ssa.CallInstruction
 	for i := 1; i < level; i++ {
 		new_context[i-1] = caller_context.callstring[i]
 	}
@@ -59,28 +59,20 @@ func (*context) GenContext(caller_context context, l *ssa.CallInstruction) conte
 	return context{new_context}
 }
 
-type graph_callee struct {
-	fn   *ssa.Function
-	inst *ssa.CallInstruction
-}
-
 // denotes a reachable func with context
 type funcnode struct {
 	fn           *ssa.Function // func ir info
 	obj          nodeid        // start of this function object block
-	callees      map[graph_callee][]*funcnode
 	func_context context
 }
 
 // wrapper. duplicate edges  due to the elimination of context
-func (a *analysis) addCallGraphEdge(caller *ssa.Function, callsite *ssa.CallInstruction, callee *ssa.Function) {
-	n1 := a.CallGraph.CreateNode(caller)
-	n2 := a.CallGraph.CreateNode(callee)
-	for _, edge := range n1.Out {
-		if edge.Site == *callsite && edge.Callee == n2 {
-			return
-		}
+func (a *analysis) addCallGraphEdge(caller *ssa.Function, callsite ssa.CallInstruction, callee *ssa.Function) {
+	if _, ok := a.callgraph[caller]; !ok {
+		a.callgraph[caller] = make(map[ssa.CallInstruction]map[*ssa.Function]bool)
 	}
-	callgraph.AddEdge(n1, *callsite, n2)
-	return
+	if _, ok := a.callgraph[caller][callsite]; !ok {
+		a.callgraph[caller][callsite] = make(map[*ssa.Function]bool)
+	}
+	a.callgraph[caller][callsite][callee] = true
 }

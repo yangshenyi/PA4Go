@@ -170,17 +170,48 @@ func (a *analysis) genBuiltinCall(instr ssa.CallInstruction, cgn *funcnode) {
 }
 
 // genStaticCall generates constraints for a statically dispatched function call.
-func (a *analysis) genStaticCall(caller *cgnode, site *callsite, call *ssa.CallCommon, result nodeid) {
+func (a *analysis) genStaticCall(caller *funcnode, site ssa.CallInstruction, call *ssa.CallCommon, result nodeid) {
 	fn := call.StaticCallee()
 
-	// Ascertain the context (contour/cgnode) for a particular call.
+	// Called function object
 	var obj nodeid
-	if a.shouldUseContext(fn) {
-		obj = a.makeFunctionObject(fn, site) // new contour
-	} else {
-		obj = a.objectNode(nil, fn) // shared contour
+
+	// Find related context, if exists.
+	// or create a new function object with context generated
+	new_context := caller.func_context.GenContext(site)
+	if _, ok := a.csfuncobj[fn]; !ok {
+		a.csfuncobj[fn] = make(map[context]nodeid, 0)
 	}
-	a.callEdge(caller, site, obj)
+	newly_add := false
+	if selectiveContextPolicy(fn) {
+		if func_obj, ok2 := a.csfuncobj[fn][new_context]; ok2 {
+			obj = func_obj
+		} else {
+			obj = a.makeFunctionObject(fn)
+			a.csfuncobj[fn][new_context] = obj
+			newly_add = true
+		}
+	} else {
+		if func_obj, ok2 := a.csfuncobj[fn][NewContext()]; ok2 {
+			obj = func_obj
+		} else {
+			obj = a.makeFunctionObject(fn)
+			a.csfuncobj[fn][NewContext()] = obj
+			newly_add = true
+		}
+	}
+
+	if newly_add {
+		new_funcnode := &funcnode{fn, obj, new_context}
+
+		// Add newly added funcnode into reachable queue
+		a.reachable_queue = append(a.reachable_queue, new_funcnode)
+
+		// Set called function obj's obj field.
+		a.nodes[obj].obj.funcn = new_funcnode
+	}
+
+	a.addCallGraphEdge(caller.fn, site, fn)
 
 	sig := call.Signature()
 
@@ -189,77 +220,80 @@ func (a *analysis) genStaticCall(caller *cgnode, site *callsite, call *ssa.CallC
 	args := call.Args
 	if sig.Recv() != nil {
 		sz := a.sizeof(sig.Recv().Type())
-		a.copy(params, a.valueNode(args[0]), sz)
-		params += nodeid(sz)
+		a.addflow(params, a.valueNode(args[0]), sz)
+		params += nodeid(sz) // add params, cause receiver is the first param, but not args
 		args = args[1:]
 	}
 
 	// Copy actual parameters into formal params block.
-	// Must loop, since the actuals aren't contiguous.
 	for i, arg := range args {
 		sz := a.sizeof(sig.Params().At(i).Type())
-		a.copy(params, a.valueNode(arg), sz)
+		a.addflow(params, a.valueNode(arg), sz)
 		params += nodeid(sz)
 	}
 
 	// Copy formal results block to actual result.
 	if result != 0 {
-		a.copy(result, a.funcResults(obj), a.sizeof(sig.Results()))
+		a.addflow(result, a.funcResults(obj), a.sizeof(sig.Results()))
 	}
+
 }
 
 // genDynamicCall generates constraints for a dynamic function call.
-func (a *analysis) genDynamicCall(caller *cgnode, site *callsite, call *ssa.CallCommon, result nodeid) {
-	// pts(targets) will be the set of possible call targets.
-	site.targets = a.valueNode(call.Value)
-
+func (a *analysis) genDynamicCall(caller *funcnode, site ssa.CallInstruction, call *ssa.CallCommon, result nodeid) {
 	// We add dynamic closure rules that store the arguments into
 	// the P-block and load the results from the R-block of each
 	// function discovered in pts(targets).
 
 	sig := call.Signature()
-	var offset uint32 = 1 // P/R block starts at offset 1
-	for i, arg := range call.Args {
-		sz := a.sizeof(sig.Params().At(i).Type())
-		a.genStore(caller, call.Value, a.valueNode(arg), offset, sz)
-		offset += sz
-	}
-	if result != 0 {
-		a.genLoad(caller, result, call.Value, offset, a.sizeof(sig.Results()))
-	}
-}
 
-// genInvoke generates constraints for a dynamic method invocation.
-func (a *analysis) genInvoke(caller *cgnode, site *callsite, call *ssa.CallCommon, result nodeid) {
-	if call.Value.Type() == a.reflectType {
-		a.genInvokeReflectType(caller, site, call, result)
-		return
-	}
-
-	sig := call.Signature()
-
-	// Allocate a contiguous targets/params/results block for this call.
+	// Allocate a contiguous relay params/results block for this call.
 	block := a.nextNode()
-	// pts(targets) will be the set of possible call targets
-	site.targets = a.addOneNode(sig, "invoke.targets", nil)
 	p := a.addNodes(sig.Params(), "invoke.params")
 	r := a.addNodes(sig.Results(), "invoke.results")
 
 	// Copy the actual parameters into the call's params block.
 	for i, n := 0, sig.Params().Len(); i < n; i++ {
 		sz := a.sizeof(sig.Params().At(i).Type())
-		a.copy(p, a.valueNode(call.Args[i]), sz)
+		a.addflow(p, a.valueNode(call.Args[i]), sz)
 		p += nodeid(sz)
 	}
 	// Copy the call's results block to the actual results.
 	if result != 0 {
-		a.copy(result, r, a.sizeof(sig.Results()))
+		a.addflow(result, r, a.sizeof(sig.Results()))
 	}
 
 	// We add a dynamic invoke constraint that will connect the
 	// caller's and the callee's P/R blocks for each discovered
 	// call target.
-	a.addConstraint(&invokeConstraint{call.Method, a.valueNode(call.Value), block})
+	a.nodes[a.valueNode(call.Value)].fly_solve = append(a.nodes[a.valueNode(call.Value)].fly_solve, &fpRule{caller, site, block})
+}
+
+// genInvoke generates constraints for a dynamic method invocation.
+func (a *analysis) genInvoke(caller *funcnode, site ssa.CallInstruction, call *ssa.CallCommon, result nodeid) {
+
+	sig := call.Signature()
+
+	// Allocate a contiguous relay params/results block for this call.
+	block := a.nextNode()
+	p := a.addNodes(sig.Params(), "invoke.params")
+	r := a.addNodes(sig.Results(), "invoke.results")
+
+	// Copy the actual parameters into the call's params block.
+	for i, n := 0, sig.Params().Len(); i < n; i++ {
+		sz := a.sizeof(sig.Params().At(i).Type())
+		a.addflow(p, a.valueNode(call.Args[i]), sz)
+		p += nodeid(sz)
+	}
+	// Copy the call's results block to the actual results.
+	if result != 0 {
+		a.addflow(result, r, a.sizeof(sig.Results()))
+	}
+
+	// We add a dynamic invoke constraint that will connect the
+	// caller's and the callee's P/R blocks for each discovered
+	// call target.
+	a.nodes[a.valueNode(call.Value)].fly_solve = append(a.nodes[a.valueNode(call.Value)].fly_solve, &invokeRule{caller, site, call.Method, block})
 }
 
 // genCall generates constraints for call instruction instr.
@@ -268,7 +302,7 @@ func (a *analysis) genCall(cfc *funcnode, instr ssa.CallInstruction) {
 
 	// Intrinsic implementations of built-in functions.
 	if _, ok := call.Value.(*ssa.Builtin); ok {
-		a.genBuiltinCall(instr, caller)
+		a.genBuiltinCall(instr, cfc)
 		return
 	}
 
@@ -277,20 +311,16 @@ func (a *analysis) genCall(cfc *funcnode, instr ssa.CallInstruction) {
 		result = a.valueNode(v)
 	}
 
-	site := &callsite{instr: instr}
 	if call.StaticCallee() != nil {
-		a.genStaticCall(caller, site, call, result)
+		a.genStaticCall(cfc, instr, call, result)
 	} else if call.IsInvoke() {
-		a.genInvoke(caller, site, call, result)
+		a.genInvoke(cfc, instr, call, result)
 	} else {
-		a.genDynamicCall(caller, site, call, result)
+		a.genDynamicCall(cfc, instr, call, result)
 	}
 
-	caller.sites = append(caller.sites, site)
-
 	if a.log != nil {
-		// TODO(adonovan): debug: improve log message.
-		fmt.Fprintf(a.log, "\t%s to targets %s from %s\n", site, site.targets, caller)
+		fmt.Fprintf(a.log, "\t%s in %s", instr, cfc.fn.Name())
 	}
 }
 
@@ -564,17 +594,4 @@ func (a *analysis) genFunc(cfc *funcnode) {
 	// clear buffer
 	a.localval = nil
 	a.localobj = nil
-}
-
-// genMethodsOf generates nodes and constraints for all methods of type T.
-func (a *analysis) genMethodsOf(T types.Type) {
-	itf := isInterface(T)
-
-	// TODO(adonovan): can we skip this entirely if itf is true?
-	// I think so, but the answer may depend on reflection.
-	mset := a.prog.MethodSets.MethodSet(T)
-	for i, n := 0, mset.Len(); i < n; i++ {
-		m := a.prog.MethodValue(mset.At(i))
-		a.valueNode(m)
-	}
 }

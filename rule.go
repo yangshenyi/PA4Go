@@ -3,6 +3,8 @@ package pa
 import (
 	"fmt"
 	"go/types"
+
+	"golang.org/x/tools/go/ssa"
 )
 
 type rule interface {
@@ -52,9 +54,44 @@ type untagRule struct {
 // src.method(params...)
 // A complex Rule attached to iface.
 type invokeRule struct {
+	caller *funcnode
+	site   ssa.CallInstruction
 	method *types.Func // the abstract method
-	iface  nodeid      // (ptr) the interface
 	params nodeid      // the start of the identity/params/results block
+}
+
+// fp
+type fpRule struct {
+	caller *funcnode
+	site   ssa.CallInstruction
+	params nodeid // the start of the identity/params/results block
+}
+
+// The size of the copy is implicitly 1.
+// It returns true if pts(dst) changed.
+func (a *analysis) auxaddflow(dst, src nodeid) bool {
+	if dst != src {
+		if nsrc := a.nodes[src]; nsrc.flow_to.add(dst) {
+			if a.log != nil {
+				fmt.Fprintf(a.log, "\t\t\tdynamic copy n%d <- n%d\n", dst, src)
+			}
+			return a.nodes[dst].pts.addAll(&nsrc.pts)
+		}
+	}
+	return false
+}
+
+// Returns sizeof.
+// Implicitly adds nodes to worklist.
+func (a *analysis) auxaddflowN(dst, src nodeid, sizeof uint32) uint32 {
+	for i := uint32(0); i < sizeof; i++ {
+		if a.auxaddflow(dst, src) {
+			a.addWork(dst)
+		}
+		src++
+		dst++
+	}
+	return sizeof
 }
 
 func (c *loadRule) addflow(a *analysis, delta *nodeset) {
@@ -62,12 +99,12 @@ func (c *loadRule) addflow(a *analysis, delta *nodeset) {
 	for _, x := range delta.AppendTo(a.deltaSpace) {
 		k := nodeid(x)
 		koff := k + nodeid(c.offset)
-		if a.onlineCopy(c.dst, koff) {
+		if a.auxaddflow(c.d, koff) {
 			changed = true
 		}
 	}
 	if changed {
-		a.addWork(c.dst)
+		a.addWork(c.d)
 	}
 }
 
@@ -75,18 +112,18 @@ func (c *storeRule) addflow(a *analysis, delta *nodeset) {
 	for _, x := range delta.AppendTo(a.deltaSpace) {
 		k := nodeid(x)
 		koff := k + nodeid(c.offset)
-		if a.onlineCopy(koff, c.src) {
+		if a.auxaddflow(koff, c.s) {
 			a.addWork(koff)
 		}
 	}
 }
 
 func (c *offsetAddrRule) addflow(a *analysis, delta *nodeset) {
-	dst := a.nodes[c.dst]
+	dst := a.nodes[c.d]
 	for _, x := range delta.AppendTo(a.deltaSpace) {
 		k := nodeid(x)
-		if dst.addflow.pts.add(k + nodeid(c.offset)) {
-			a.addWork(c.dst)
+		if dst.pts.add(k + nodeid(c.offset)) {
+			a.addWork(c.d)
 		}
 	}
 }
@@ -102,8 +139,8 @@ func (c *typeFilterRule) addflow(a *analysis, delta *nodeset) {
 		}
 
 		if types.AssignableTo(tDyn, c.typ) {
-			if a.addLabel(c.dst, ifaceObj) {
-				a.addWork(c.dst)
+			if a.nodes[c.d].pts.add(ifaceObj) {
+				a.addWork(c.d)
 			}
 		}
 	}
@@ -130,7 +167,7 @@ func (c *untagRule) addflow(a *analysis, delta *nodeset) {
 			// nonpointerlike we can skip this entire
 			// Rule, perhaps.  We only care about
 			// pointers among the fields.
-			a.onlineCopyN(c.dst, v, a.sizeof(tDyn))
+			a.auxaddflowN(c.d, v, a.sizeof(tDyn))
 		}
 	}
 }
@@ -138,49 +175,138 @@ func (c *untagRule) addflow(a *analysis, delta *nodeset) {
 func (c *invokeRule) addflow(a *analysis, delta *nodeset) {
 	for _, x := range delta.AppendTo(a.deltaSpace) {
 		ifaceObj := nodeid(x)
-		tDyn, v, indirect := a.taggedValue(ifaceObj)
-		if indirect {
-			// TODO(adonovan): we may need to implement this if
-			// we ever apply invokeRules to reflect.Value PTSs,
-			// e.g. for (reflect.Value).Call.
-			panic("indirect tagged object")
-		}
+		tDyn, v, _ := a.taggedValue(ifaceObj)
 
 		// Look up the concrete method.
 		fn := a.prog.LookupMethod(tDyn, c.method.Pkg(), c.method.Name())
 		if fn == nil {
-			panic(fmt.Sprintf("n%d: no ssa.Function for %s", c.iface, c.method))
+			panic(fmt.Sprintf("no ssa.Function for %s", c.method))
 		}
 		sig := fn.Signature
 
-		fnObj := a.globalobj[fn] // dynamic calls use shared contour
-		if fnObj == 0 {
-			// a.objectNode(fn) was not called during gen phase.
-			panic(fmt.Sprintf("a.globalobj[%s]==nil", fn))
+		var obj nodeid
+
+		// Find related context, if exists.
+		// or create a new function object with context generated
+		new_context := c.caller.func_context.GenContext(c.site)
+		if _, ok := a.csfuncobj[fn]; !ok {
+			a.csfuncobj[fn] = make(map[context]nodeid, 0)
+		}
+		newly_add := false
+		if selectiveContextPolicy(fn) {
+			if func_obj, ok2 := a.csfuncobj[fn][new_context]; ok2 {
+				obj = func_obj
+			} else {
+				obj = a.makeFunctionObject(fn)
+				a.csfuncobj[fn][new_context] = obj
+				newly_add = true
+			}
+		} else {
+			if func_obj, ok2 := a.csfuncobj[fn][NewContext()]; ok2 {
+				obj = func_obj
+			} else {
+				obj = a.makeFunctionObject(fn)
+				a.csfuncobj[fn][NewContext()] = obj
+				newly_add = true
+			}
 		}
 
-		// Make callsite's fn variable point to identity of
-		// concrete method.  (There's no need to add it to
-		// worklist since it never has attached Rules.)
-		a.addLabel(c.params, fnObj)
+		if newly_add {
+			new_funcnode := &funcnode{fn, obj, new_context}
+
+			// Add newly added funcnode into reachable queue
+			a.reachable_queue = append(a.reachable_queue, new_funcnode)
+
+			// Set called function obj's obj field.
+			a.nodes[obj].obj.funcn = new_funcnode
+		}
+
+		a.addCallGraphEdge(c.caller.fn, c.site, fn)
 
 		// Extract value and connect to method's receiver.
 		// Copy payload to method's receiver param (arg0).
-		arg0 := a.funcParams(fnObj)
+		arg0 := a.funcParams(obj)
 		recvSize := a.sizeof(sig.Recv().Type())
-		a.onlineCopyN(arg0, v, recvSize)
+		a.auxaddflowN(arg0, v, recvSize)
 
-		src := c.params + 1 // skip past identity
+		src := c.params
 		dst := arg0 + nodeid(recvSize)
 
 		// Copy caller's argument block to method formal parameters.
 		paramsSize := a.sizeof(sig.Params())
-		a.onlineCopyN(dst, src, paramsSize)
+		a.auxaddflowN(dst, src, paramsSize)
 		src += nodeid(paramsSize)
 		dst += nodeid(paramsSize)
 
 		// Copy method results to caller's result block.
 		resultsSize := a.sizeof(sig.Results())
-		a.onlineCopyN(src, dst, resultsSize)
+		a.auxaddflowN(src, dst, resultsSize)
+	}
+}
+
+func (c *fpRule) addflow(a *analysis, delta *nodeset) {
+	for _, x := range delta.AppendTo(a.deltaSpace) {
+		funcobj := nodeid(x)
+
+		// Look up the concrete method.
+		var fn *ssa.Function
+		var ok bool
+		if fn, ok = a.nodes[funcobj].obj.data.(*ssa.Function); !ok {
+			panic(fmt.Sprintf("no ssa.Function for %s", c.site))
+		}
+
+		sig := fn.Signature
+
+		var obj nodeid
+
+		// Find related context, if exists.
+		// or create a new function object with context generated
+		new_context := c.caller.func_context.GenContext(c.site)
+		if _, ok := a.csfuncobj[fn]; !ok {
+			a.csfuncobj[fn] = make(map[context]nodeid, 0)
+		}
+		newly_add := false
+		if selectiveContextPolicy(fn) {
+			if func_obj, ok2 := a.csfuncobj[fn][new_context]; ok2 {
+				obj = func_obj
+			} else {
+				obj = a.makeFunctionObject(fn)
+				a.csfuncobj[fn][new_context] = obj
+				newly_add = true
+			}
+		} else {
+			if func_obj, ok2 := a.csfuncobj[fn][NewContext()]; ok2 {
+				obj = func_obj
+			} else {
+				obj = a.makeFunctionObject(fn)
+				a.csfuncobj[fn][NewContext()] = obj
+				newly_add = true
+			}
+		}
+
+		if newly_add {
+			new_funcnode := &funcnode{fn, obj, new_context}
+
+			// Add newly added funcnode into reachable queue
+			a.reachable_queue = append(a.reachable_queue, new_funcnode)
+
+			// Set called function obj's obj field.
+			a.nodes[obj].obj.funcn = new_funcnode
+		}
+
+		a.addCallGraphEdge(c.caller.fn, c.site, fn)
+
+		src := c.params
+		dst := a.funcParams(obj)
+
+		// Copy caller's argument block to method formal parameters.
+		paramsSize := a.sizeof(sig.Params())
+		a.auxaddflowN(dst, src, paramsSize)
+		src += nodeid(paramsSize)
+		dst += nodeid(paramsSize)
+
+		// Copy method results to caller's result block.
+		resultsSize := a.sizeof(sig.Results())
+		a.auxaddflowN(src, dst, resultsSize)
 	}
 }

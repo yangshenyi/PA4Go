@@ -258,7 +258,7 @@ func (a *analysis) objectNode(func_node *funcnode, v ssa.Value) nodeid {
 
 			// Copy the value into it, if nontrivial.
 			if x := a.valueNode(v.X); x != 0 {
-				a.copy(obj+1, x, a.sizeof(tConc))
+				a.addflow(obj+1, x, a.sizeof(tConc))
 			}
 
 		case *ssa.FieldAddr:

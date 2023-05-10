@@ -53,6 +53,7 @@ func (a *analysis) solve() {
 	// generate synthesis root node
 	root_func := a.prog.NewFunction("<synthesis root>", new(types.Signature), "root")
 	a.CallGraph = callgraph.New(root_func)
+	a.callgraph[root_func] = make(map[ssa.CallInstruction]map[*ssa.Function]bool)
 	// addreachable for entry point func
 	// For each main package, call main.init(), main.main().
 	for _, mainPkg := range a.mains {
@@ -65,18 +66,17 @@ func (a *analysis) solve() {
 			if a.log != nil {
 				fmt.Fprintf(a.log, "\troot call to %s:\n", fn)
 			}
-			callgraph.AddEdge(a.CallGraph.CreateNode(root_func), nil, a.CallGraph.CreateNode(fn))
+			a.addCallGraphEdge(root_func, nil, fn)
 			if a.log != nil {
-				fmt.Fprintf(a.log, "\tCallGraph: %s --> %s:\n", a.CallGraph.CreateNode(root_func), a.CallGraph.CreateNode(fn))
+				fmt.Fprintf(a.log, "\tCallGraph: %s --> %s:\n", root_func.Name(), fn.Name())
 			}
-
 			new_func_obj_id := a.makeFunctionObject(fn)
 			new_context := NewContext()
 			if _, ok := a.csfuncobj[fn]; !ok {
 				a.csfuncobj[fn] = make(map[context]nodeid)
 			}
 			a.csfuncobj[fn][new_context] = new_func_obj_id
-			a.addReachable(funcnode{fn, new_func_obj_id, make(map[graph_callee][]*funcnode), new_context})
+			a.addReachable(funcnode{fn, new_func_obj_id, new_context})
 		}
 	}
 
