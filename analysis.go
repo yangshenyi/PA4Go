@@ -9,15 +9,6 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// A Config formulates a pointer analysis problem for Analyze. It is
-// only usable for a single invocation of Analyze and must not be
-// reused.
-type Config struct {
-	Mains []*ssa.Package
-
-	Log io.Writer
-}
-
 // An analysis instance holds the state of a single pointer analysis problem.
 type analysis struct {
 	prog            *ssa.Program // the program being analyzed
@@ -38,23 +29,6 @@ type analysis struct {
 	// result
 	callgraph map[*ssa.Function]map[ssa.CallInstruction]map[*ssa.Function]bool
 	CallGraph *callgraph.Graph // discovered call graph
-}
-
-// enclosingObj returns the first node of the addressable memory
-// object that encloses node id.  Panic ensues if that node does not
-// belong to any object.
-func (a *analysis) enclosingObj(id nodeid) nodeid {
-	// Find previous node with obj != nil.
-	for i := id; i >= 0; i-- {
-		n := a.nodes[i]
-		if obj := n.obj; obj != nil {
-			if i+nodeid(obj.size) <= id {
-				break // out of bounds
-			}
-			return i
-		}
-	}
-	panic("node has no enclosing object")
 }
 
 func Analyze(prog_ *ssa.Program, log_ io.Writer, mains_ []*ssa.Package) (result *callgraph.Graph, err error) {
@@ -83,7 +57,7 @@ func Analyze(prog_ *ssa.Program, log_ io.Writer, mains_ []*ssa.Package) (result 
 	}
 
 	if a.log != nil {
-		fmt.Fprintln(a.log, "==== Starting analysis")
+		fmt.Fprintln(a.log, "----------- Starting analysis -----------")
 	}
 
 	a.solve()

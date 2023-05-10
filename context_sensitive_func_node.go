@@ -39,7 +39,7 @@ func selectiveContextPolicy(fn *ssa.Function) bool {
 				}
 			}
 		}*/
-	return true
+	return false
 }
 
 type context struct {

@@ -182,6 +182,16 @@ func (c *invokeRule) addflow(a *analysis, delta *nodeset) {
 		if fn == nil {
 			panic(fmt.Sprintf("no ssa.Function for %s", c.method))
 		}
+
+		if pkg := fn.Pkg; pkg != nil {
+			if pkg.Pkg.Name() == "reflect" {
+				continue
+			}
+			if pkg.Pkg.Name() == "runtime" {
+				continue
+			}
+		}
+
 		sig := fn.Signature
 
 		var obj nodeid
@@ -214,11 +224,11 @@ func (c *invokeRule) addflow(a *analysis, delta *nodeset) {
 		if newly_add {
 			new_funcnode := &funcnode{fn, obj, new_context}
 
-			// Add newly added funcnode into reachable queue
-			a.reachable_queue = append(a.reachable_queue, new_funcnode)
-
 			// Set called function obj's obj field.
 			a.nodes[obj].obj.funcn = new_funcnode
+
+			// Add newly added funcnode into reachable queue
+			a.addReachable(*new_funcnode)
 		}
 
 		a.addCallGraphEdge(c.caller.fn, c.site, fn)
@@ -287,11 +297,11 @@ func (c *fpRule) addflow(a *analysis, delta *nodeset) {
 		if newly_add {
 			new_funcnode := &funcnode{fn, obj, new_context}
 
-			// Add newly added funcnode into reachable queue
-			a.reachable_queue = append(a.reachable_queue, new_funcnode)
-
 			// Set called function obj's obj field.
 			a.nodes[obj].obj.funcn = new_funcnode
+
+			// Add newly added funcnode into reachable queue
+			a.addReachable(*new_funcnode)
 		}
 
 		a.addCallGraphEdge(c.caller.fn, c.site, fn)

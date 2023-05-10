@@ -258,7 +258,7 @@ func (a *analysis) objectNode(func_node *funcnode, v ssa.Value) nodeid {
 
 			// Copy the value into it, if nontrivial.
 			if x := a.valueNode(v.X); x != 0 {
-				a.addflow(obj+1, x, a.sizeof(tConc))
+				a.addflow(obj+1, x, a.sizeof(tConc), v)
 			}
 
 		case *ssa.FieldAddr:
@@ -312,7 +312,7 @@ func (a *analysis) taggedValue(obj nodeid) (tDyn types.Type, v nodeid, indirect 
 	if flags&otTagged == 0 {
 		panic(fmt.Sprintf("not a tagged object: n%d", obj))
 	}
-	return n.typ, obj + 1, flags != 0
+	return n.typ, obj + 1, flags&8 != 0
 }
 
 // here, the id denotes the start of a function block.

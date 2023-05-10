@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"go/types"
 
+	"github.com/yangshenyi/PA4Go/vendo/typeparams"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -12,7 +13,7 @@ import (
 
 // copy creates a constraint of the form dst = src.
 // sizeof is the width (in logical fields) of the copied type.
-func (a *analysis) addflow(dst, src nodeid, sizeof uint32) {
+func (a *analysis) addflow(dst, src nodeid, sizeof uint32, instr ssa.Value) {
 	if src == dst || sizeof == 0 {
 		return // trivial
 	}
@@ -20,6 +21,9 @@ func (a *analysis) addflow(dst, src nodeid, sizeof uint32) {
 		panic(fmt.Sprintf("ill-typed copy dst=n%d src=n%d", dst, src))
 	}
 	for i := uint32(0); i < sizeof; i++ {
+		if src == 433970 {
+			fmt.Println(len(a.nodes), dst, src, sizeof, i, instr, a.prog.Fset.Position(instr.Pos()))
+		}
 		a.nodes[src].flow_to.add(dst)
 		src++
 		dst++
@@ -113,13 +117,11 @@ func (a *analysis) genAppend(instr *ssa.Call, cgn *funcnode) {
 	x := instr.Call.Args[0]
 
 	z := instr
-	a.addflow(a.valueNode(z), a.valueNode(x), 1) // z = x
+	a.addflow(a.valueNode(z), a.valueNode(x), 1, instr) // z = x
 
 	if len(instr.Call.Args) == 1 {
 		return // no allocation for z = append(x) or _ = append(x).
 	}
-
-	// TODO(adonovan): test append([]byte, ...string) []byte.
 
 	y := instr.Call.Args[1]
 	tArray := sliceToArray(instr.Call.Args[0].Type())
@@ -146,11 +148,11 @@ func (a *analysis) genBuiltinCall(instr ssa.CallInstruction, cgn *funcnode) {
 		a.copyElems(cgn, tElem, call.Args[0], call.Args[1])
 
 	case "panic":
-		a.addflow(a.panicNode, a.valueNode(call.Args[0]), 1) // z = x
+		a.addflow(a.panicNode, a.valueNode(call.Args[0]), 1, call.Value) // z = x
 
 	case "recover":
 		if v := instr.Value(); v != nil {
-			a.addflow(a.valueNode(v), a.panicNode, 1)
+			a.addflow(a.valueNode(v), a.panicNode, 1, call.Value)
 		}
 
 	case "print":
@@ -161,7 +163,7 @@ func (a *analysis) genBuiltinCall(instr ssa.CallInstruction, cgn *funcnode) {
 		}
 
 	case "ssa:wrapnilchk":
-		a.addflow(a.valueNode(instr.Value()), a.valueNode(call.Args[0]), 1)
+		a.addflow(a.valueNode(instr.Value()), a.valueNode(call.Args[0]), 1, call.Value)
 
 	default:
 		// No-ops: close len cap real imag complex print println delete.
@@ -228,7 +230,7 @@ func (a *analysis) genStaticCall(caller *funcnode, site ssa.CallInstruction, cal
 	args := call.Args
 	if sig.Recv() != nil {
 		sz := a.sizeof(sig.Recv().Type())
-		a.addflow(params, a.valueNode(args[0]), sz)
+		a.addflow(params, a.valueNode(args[0]), sz, call.Value)
 		params += nodeid(sz) // add params, cause receiver is the first param, but not args
 		args = args[1:]
 	}
@@ -236,13 +238,13 @@ func (a *analysis) genStaticCall(caller *funcnode, site ssa.CallInstruction, cal
 	// Copy actual parameters into formal params block.
 	for i, arg := range args {
 		sz := a.sizeof(sig.Params().At(i).Type())
-		a.addflow(params, a.valueNode(arg), sz)
+		a.addflow(params, a.valueNode(arg), sz, call.Value)
 		params += nodeid(sz)
 	}
 
 	// Copy formal results block to actual result.
 	if result != 0 {
-		a.addflow(result, a.funcResults(obj), a.sizeof(sig.Results()))
+		a.addflow(result, a.funcResults(obj), a.sizeof(sig.Results()), call.Value)
 	}
 
 }
@@ -263,12 +265,12 @@ func (a *analysis) genDynamicCall(caller *funcnode, site ssa.CallInstruction, ca
 	// Copy the actual parameters into the call's params block.
 	for i, n := 0, sig.Params().Len(); i < n; i++ {
 		sz := a.sizeof(sig.Params().At(i).Type())
-		a.addflow(p, a.valueNode(call.Args[i]), sz)
+		a.addflow(p, a.valueNode(call.Args[i]), sz, call.Value)
 		p += nodeid(sz)
 	}
 	// Copy the call's results block to the actual results.
 	if result != 0 {
-		a.addflow(result, r, a.sizeof(sig.Results()))
+		a.addflow(result, r, a.sizeof(sig.Results()), call.Value)
 	}
 
 	// We add a dynamic invoke constraint that will connect the
@@ -290,12 +292,12 @@ func (a *analysis) genInvoke(caller *funcnode, site ssa.CallInstruction, call *s
 	// Copy the actual parameters into the call's params block.
 	for i, n := 0, sig.Params().Len(); i < n; i++ {
 		sz := a.sizeof(sig.Params().At(i).Type())
-		a.addflow(p, a.valueNode(call.Args[i]), sz)
+		a.addflow(p, a.valueNode(call.Args[i]), sz, call.Value)
 		p += nodeid(sz)
 	}
 	// Copy the call's results block to the actual results.
 	if result != 0 {
-		a.addflow(result, r, a.sizeof(sig.Results()))
+		a.addflow(result, r, a.sizeof(sig.Results()), call.Value)
 	}
 
 	// We add a dynamic invoke constraint that will connect the
@@ -360,7 +362,7 @@ func (a *analysis) genOffsetAddr(dst nodeid, ptr nodeid, offset uint32) {
 		//       to  dst = src
 		// (NB: this optimisation is defeated by the identity
 		// field prepended to struct and array objects.)
-		a.addflow(dst, ptr, 1)
+		a.addflow(dst, ptr, 1, nil)
 	} else {
 		a.nodes[ptr].fly_solve = append(a.nodes[ptr].fly_solve, &offsetAddrRule{offset, dst})
 	}
@@ -392,12 +394,12 @@ func (a *analysis) genInstr(cfc *funcnode, instr ssa.Instruction) {
 		if val, ok := instr.(ssa.Value); ok {
 			prefix = val.Name() + " = "
 		}
-		fmt.Fprintf(a.log, "; %s%s\n", prefix, instr)
+		fmt.Fprintf(a.log, "\t instr: %s%s\n", prefix, instr)
 	}
 
 	switch instr := instr.(type) {
 	case *ssa.DebugRef, *ssa.BinOp, *ssa.If, *ssa.Jump, *ssa.Range, *ssa.RunDefers:
-		// no-op.
+		// do nothing.
 
 	case *ssa.UnOp:
 		switch instr.Op {
@@ -416,7 +418,7 @@ func (a *analysis) genInstr(cfc *funcnode, instr ssa.Instruction) {
 		a.genCall(cfc, instr)
 
 	case *ssa.ChangeType:
-		a.addflow(a.valueNode(instr), a.valueNode(instr.X), 1)
+		a.addflow(a.valueNode(instr), a.valueNode(instr.X), 1, instr)
 
 	case *ssa.Convert:
 		a.genConv(instr, cfc)
@@ -424,7 +426,7 @@ func (a *analysis) genInstr(cfc *funcnode, instr ssa.Instruction) {
 	case *ssa.Extract:
 		a.addflow(a.valueNode(instr),
 			a.valueOffsetNode(instr.Tuple, instr.Index),
-			a.sizeof(instr.Type()))
+			a.sizeof(instr.Type()), instr)
 
 	case *ssa.FieldAddr:
 		a.genOffsetAddr(a.valueNode(instr), a.valueNode(instr.X),
@@ -436,11 +438,23 @@ func (a *analysis) genInstr(cfc *funcnode, instr ssa.Instruction) {
 	case *ssa.Field:
 		a.addflow(a.valueNode(instr),
 			a.valueOffsetNode(instr.X, instr.Field),
-			a.sizeof(instr.Type()))
+			a.sizeof(instr.Type()), instr)
 
 	case *ssa.Index:
-		a.addflow(a.valueNode(instr), 1+a.valueNode(instr.X), a.sizeof(instr.Type()))
-
+		_, isstring := typeparams.CoreType(instr.X.Type()).(*types.Basic)
+		// the flow of string elem does not make sense
+		// string is a global const
+		// ssaValue "abc" ==> create global obj obj_str
+		// set this ssaValue a local node n points to obj_str
+		// lay out
+		// 		| n |
+		// on the contrast, an array is a local obj
+		// layout
+		//		| inode | data |
+		// thus, if addflow for string as array index, out of bound
+		if !isstring {
+			a.addflow(a.valueNode(instr), 1+a.valueNode(instr.X), a.sizeof(instr.Type()), instr)
+		}
 	case *ssa.Select:
 		recv := a.valueOffsetNode(instr, 2) // instr : (index, recvOk, recv0, ... recv_n-1)
 		for _, st := range instr.States {
@@ -459,7 +473,7 @@ func (a *analysis) genInstr(cfc *funcnode, instr ssa.Instruction) {
 		results := a.funcResults(cfc.obj)
 		for _, r := range instr.Results {
 			sz := a.sizeof(r.Type())
-			a.addflow(results, a.valueNode(r), sz)
+			a.addflow(results, a.valueNode(r), sz, nil)
 			results += nodeid(sz)
 		}
 
@@ -475,26 +489,32 @@ func (a *analysis) genInstr(cfc *funcnode, instr ssa.Instruction) {
 		a.worklist.add(a.valueNode(v))
 
 	case *ssa.ChangeInterface:
-		a.addflow(a.valueNode(instr), a.valueNode(instr.X), 1)
+		a.addflow(a.valueNode(instr), a.valueNode(instr.X), 1, instr)
 
 	case *ssa.TypeAssert:
 		a.typeAssert(instr.AssertedType, a.valueNode(instr), a.valueNode(instr.X), true)
 
 	case *ssa.Slice:
-		a.addflow(a.valueNode(instr), a.valueNode(instr.X), 1)
+		a.addflow(a.valueNode(instr), a.valueNode(instr.X), 1, instr)
+
+	case *ssa.SliceToArrayPointer:
+		// Going from a []T to a *[k]T (for some k) is a single `dst = src` constraint.
+		// Both []T and *[k]T are modelled as an *IdArrayT where IdArrayT is the identity
+		// node for an array of type T, i.e `type IdArrayT struct{elem T}`.
+		a.addflow(a.valueNode(instr), a.valueNode(instr.X), 1, instr)
 
 	case *ssa.Phi:
 		sz := a.sizeof(instr.Type())
 		for _, e := range instr.Edges {
-			a.addflow(a.valueNode(instr), a.valueNode(e), sz)
+			a.addflow(a.valueNode(instr), a.valueNode(e), sz, instr)
 		}
 
 	case *ssa.MakeClosure:
 		fn := instr.Fn.(*ssa.Function)
-		a.addflow(a.valueNode(instr), a.valueNode(fn), 1)
+		a.addflow(a.valueNode(instr), a.valueNode(fn), 1, instr)
 		// Free variables are treated like global variables.
 		for i, b := range instr.Bindings {
-			a.addflow(a.valueNode(fn.FreeVars[i]), a.valueNode(b), a.sizeof(b.Type()))
+			a.addflow(a.valueNode(fn.FreeVars[i]), a.valueNode(b), a.sizeof(b.Type()), instr)
 		}
 
 	case *ssa.Next:
@@ -546,7 +566,7 @@ func (a *analysis) genInstr(cfc *funcnode, instr ssa.Instruction) {
 		a.genStore(a.valueNode(instr.Map), a.valueNode(instr.Value), ksize, vsize)
 
 	case *ssa.Panic:
-		a.addflow(a.panicNode, a.valueNode(instr.X), 1)
+		a.addflow(a.panicNode, a.valueNode(instr.X), 1, nil)
 
 	default:
 		panic(fmt.Sprintf("unimplemented: %T", instr))
@@ -558,7 +578,7 @@ func (a *analysis) genFunc(cfc *funcnode) {
 	fn := cfc.fn
 
 	if a.log != nil {
-		fmt.Fprintln(a.log, "; Creating nodes for local values")
+		fmt.Fprintln(a.log, "\tCreating nodes for local values of", cfc.func_context, cfc.fn.Name())
 	}
 
 	// Each time we analyze a new func with context, we allocate a new buffer

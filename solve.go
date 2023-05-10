@@ -22,6 +22,7 @@ func (a *analysis) addReachable(fc funcnode) {
 	}
 }
 
+// one level spread
 func (a *analysis) propagate(n *node, delta *nodeset) {
 	n.prev_pts.Copy(&n.pts.Sparse)
 
@@ -39,6 +40,7 @@ func (a *analysis) propagate(n *node, delta *nodeset) {
 }
 
 func (a *analysis) solve() {
+
 	// ------------ init -----------------
 
 	// Create a dummy node for non-pointerlike variables.
@@ -52,6 +54,7 @@ func (a *analysis) solve() {
 	a.CallGraph = callgraph.New(root_func)
 	a.callgraph = make(map[*ssa.Function]map[ssa.CallInstruction]map[*ssa.Function]bool)
 	a.callgraph[root_func] = make(map[ssa.CallInstruction]map[*ssa.Function]bool)
+
 	// addreachable for entry point func
 	// For each main package, call main.init(), main.main().
 	for _, mainPkg := range a.mains {
@@ -79,6 +82,7 @@ func (a *analysis) solve() {
 	}
 
 	// ------------ worklist iteration -----------------
+
 	if a.log != nil {
 		fmt.Fprintf(a.log, "\n\n----- Solving through worklist ---------\n\n")
 	}
@@ -116,16 +120,13 @@ func (a *analysis) solve() {
 			rule.addflow(a, &delta)
 		}
 
-		if a.log != nil {
-			fmt.Fprintf(a.log, "\t\tpts(n%d) = %s\n", id, &n.pts)
-		}
 	}
 
 	if !a.nodes[0].pts.IsEmpty() {
 		panic(fmt.Sprintf("pts(0) is nonempty: %s", &a.nodes[0].pts))
 	}
 
-	// Release working state (but keep final PTS).
+	// Release buffer except for final pts
 	for _, n := range a.nodes {
 		n.fly_solve = nil
 		n.flow_to.Clear()

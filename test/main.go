@@ -24,6 +24,19 @@ type I interface {
 
 type C struct{}
 
+func inc(func1 func(int)int){
+	var func2 func(int)
+	func2 = func(x int){
+		if x==0 {
+			return
+		}
+		func2(x-1)
+		_ = func1(5)            
+	}
+
+	func2(5)
+}
+
 func (C) f(m map[string]int) {
 	fmt.Println("C.f()")
 }
@@ -33,12 +46,30 @@ func (B) f(m map[string]int) {
 	fmt.Println("B.f()")
 }
 
+
 func main() {
 	var i I = C{}
 	x := map[string]int{"one":1}
 	i.f(x) // dynamic method call
+	k:=5
+	inc(func(x int)int{return x+1})
+	_ = k
 }
+
 `
+	/*
+
+	   inc
+
+	   inc$1
+	   # Free variables:
+	   #   0:	func2 *func(int) --> t2 --> fn inc$1
+	   #   1:	func1 *func(int) int --> func1 --> main$1
+
+	   t1 <== t1	==>	t1->inc$1
+	   t4 <== func1	==>	t4->main$1
+
+	*/
 	var conf loader.Config
 
 	// Parse the input file, a string.
@@ -70,17 +101,25 @@ func main() {
 	for _, mem := range mainPkg.Members {
 		if fun, ok := mem.(*ssa.Function); ok {
 			fun.WriteTo(os.Stdout)
+			if fun.Name() == "inc" {
+				fmt.Println(1)
+				for _, block := range fun.Blocks {
+					for _, instr := range block.Instrs {
+						if v, ok := instr.(*ssa.MakeClosure); ok {
+							v.Fn.(*ssa.Function).WriteTo(os.Stdout)
+							fmt.Println(v.Bindings)
+						}
+					}
+				}
+			}
 		}
 	}
-	// Run the pointer analysis.
+
 	result, err := pa.Analyze(prog, nil, []*ssa.Package{mainPkg})
 	if err != nil {
 		panic(err) // internal error in pointer analysis
 	}
 
-	// Find edges originating from the main package.
-	// By converting to strings, we de-duplicate nodes
-	// representing the same function due to context sensitivity.
 	var edges []string
 	callgraph.GraphVisitEdges(result, func(edge *callgraph.Edge) error {
 		caller := edge.Caller.Func
