@@ -124,8 +124,7 @@ func (a *analysis) genAppend(instr *ssa.Call, cgn *funcnode) {
 	y := instr.Call.Args[1]
 	tArray := sliceToArray(instr.Call.Args[0].Type())
 
-	var w nodeid
-	w = a.nextNode()
+	w := a.nextNode()
 	a.addNodes(tArray, "append")
 	a.endObject(w, cgn, instr)
 
@@ -172,6 +171,15 @@ func (a *analysis) genBuiltinCall(instr ssa.CallInstruction, cgn *funcnode) {
 // genStaticCall generates constraints for a statically dispatched function call.
 func (a *analysis) genStaticCall(caller *funcnode, site ssa.CallInstruction, call *ssa.CallCommon, result nodeid) {
 	fn := call.StaticCallee()
+
+	if pkg := fn.Pkg; pkg != nil {
+		if pkg.Pkg.Name() == "reflect" {
+			return
+		}
+		if pkg.Pkg.Name() == "runtime" {
+			return
+		}
+	}
 
 	// Called function object
 	var obj nodeid

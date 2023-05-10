@@ -50,6 +50,7 @@ func (a *analysis) solve() {
 	// generate synthesis root node
 	root_func := a.prog.NewFunction("<synthesis root>", new(types.Signature), "root")
 	a.CallGraph = callgraph.New(root_func)
+	a.callgraph = make(map[*ssa.Function]map[ssa.CallInstruction]map[*ssa.Function]bool)
 	a.callgraph[root_func] = make(map[ssa.CallInstruction]map[*ssa.Function]bool)
 	// addreachable for entry point func
 	// For each main package, call main.init(), main.main().

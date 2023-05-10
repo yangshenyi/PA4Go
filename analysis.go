@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"go/types"
 	"io"
-	"os"
-	"runtime/debug"
 
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/ssa"
@@ -60,13 +58,6 @@ func (a *analysis) enclosingObj(id nodeid) nodeid {
 }
 
 func Analyze(prog_ *ssa.Program, log_ io.Writer, mains_ []*ssa.Package) (result *callgraph.Graph, err error) {
-	defer func() {
-		if p := recover(); p != nil {
-			err = fmt.Errorf("internal error in pointer analysis: %v (please report this bug)", p)
-			fmt.Fprintln(os.Stderr, "Internal panic in pointer analysis:")
-			debug.PrintStack()
-		}
-	}()
 
 	a := &analysis{
 		log:         log_,
@@ -77,17 +68,18 @@ func Analyze(prog_ *ssa.Program, log_ io.Writer, mains_ []*ssa.Package) (result 
 		flattenMemo: make(map[types.Type][]*subEleInfo),
 		csfuncobj:   make(map[ssa.Value]map[context]nodeid),
 		deltaSpace:  make([]int, 0, 100),
-	}
-
-	if false {
-		a.log = os.Stderr // for debugging crashes; extremely verbose
+		nodes:       make([]*node, 0),
 	}
 
 	if reflect := a.prog.ImportedPackage("reflect"); reflect != nil {
-		panic("reflect not support")
+		if a.log != nil {
+			fmt.Fprintln(a.log, "reflect not support")
+		}
 	}
 	if runtime := a.prog.ImportedPackage("runtime"); runtime != nil {
-		panic("runtime not support")
+		if a.log != nil {
+			fmt.Fprintln(a.log, "runtime not support")
+		}
 	}
 
 	if a.log != nil {
