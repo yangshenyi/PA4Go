@@ -8,9 +8,18 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// if we find a *ssa.Function called, check if
-func (a *analysis) addReachable() {
+// duplication check is done before.
+// that is to say, a fc passed here should not be analyzed before.
+func (a *analysis) addReachable(fc funcnode) {
+	// queue for deterministic func call
+	a.reachable_queue = make([]*funcnode, 0)
+	a.reachable_queue = append(a.reachable_queue, &fc)
 
+	for len(a.reachable_queue) > 0 {
+		cfc := a.reachable_queue[0]
+		a.reachable_queue = a.reachable_queue[1:]
+		a.genFunc(cfc)
+	}
 }
 
 func (a *analysis) propagate() {
@@ -60,7 +69,22 @@ func (a *analysis) solve() {
 			if a.log != nil {
 				fmt.Fprintf(a.log, "\tCallGraph: %s --> %s:\n", a.CallGraph.CreateNode(root_func), a.CallGraph.CreateNode(fn))
 			}
+
+			new_func_obj_id := a.makeFunctionObject(fn)
+			new_context := NewContext()
+			if _, ok := a.csfuncobj[fn]; !ok {
+				a.csfuncobj[fn] = make(map[context]nodeid)
+			}
+			a.csfuncobj[fn][new_context] = new_func_obj_id
+			a.addReachable(funcnode{fn, new_func_obj_id, make(map[graph_callee][]*funcnode), new_context})
 		}
 	}
 
+}
+
+func (a *analysis) addWork(id nodeid) {
+	a.worklist.Insert(int(id))
+	if a.log != nil {
+		fmt.Fprintf(a.log, "\t\twork: n%d\n", id)
+	}
 }

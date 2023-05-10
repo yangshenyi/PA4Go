@@ -1,10 +1,12 @@
 package pa
 
-import "go/types"
+import (
+	"fmt"
+	"go/types"
+)
 
 type rule interface {
 	addflow(a *analysis, delta *nodeset)
-	String() string
 }
 
 // d = s[offset]
@@ -181,12 +183,4 @@ func (c *invokeRule) addflow(a *analysis, delta *nodeset) {
 		resultsSize := a.sizeof(sig.Results())
 		a.onlineCopyN(src, dst, resultsSize)
 	}
-}
-
-func (c *addrRule) addflow(a *analysis, delta *nodeset) {
-	panic("addr is not a complex Rule")
-}
-
-func (c *copyRule) addflow(a *analysis, delta *nodeset) {
-	panic("copy is not a complex Rule")
 }

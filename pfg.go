@@ -1,6 +1,7 @@
 package pa
 
 import (
+	"bytes"
 	"fmt"
 	"go/types"
 
@@ -86,6 +87,12 @@ type subEleInfo struct {
 
 // ---------- Node creation ----------
 
+var (
+	tEface     = types.NewInterface(nil, nil).Complete()
+	tInvalid   = types.Typ[types.Invalid]
+	tUnsafePtr = types.Typ[types.UnsafePointer]
+)
+
 // nextNode returns the index of the next unused node.
 func (a *analysis) nextNode() nodeid {
 	return nodeid(len(a.nodes))
@@ -111,7 +118,7 @@ func (a *analysis) addNodes(typ types.Type, comment string) nodeid {
 // subelement indicates the subelement, e.g. ".a.b[*].c".
 func (a *analysis) addOneNode(typ types.Type, comment string, subelement *subEleInfo) nodeid {
 	id := a.nextNode()
-	a.nodes = append(a.nodes, &node{typ: typ, sub_element: subelement})
+	a.nodes = append(a.nodes, &node{typ: typ, sub_element: subelement, fly_solve: make([]rule, 0)})
 	if a.log != nil {
 		fmt.Fprintf(a.log, "\tcreate n%d %s for %s%s\n",
 			id, typ, comment, subelement.path())
@@ -119,10 +126,10 @@ func (a *analysis) addOneNode(typ types.Type, comment string, subelement *subEle
 	return id
 }
 
-// setValueNode associates node id with the value v.
-// cgn identifies the context iff v is a local variable.
-func (a *analysis) setValueNode(v ssa.Value, id nodeid, cgn *cgnode) {
-	if cgn != nil {
+// setValueNode relate node id with the value v.
+// cfc is equal to context.
+func (a *analysis) setValueNode(v ssa.Value, id nodeid, cfc *funcnode) {
+	if cfc != nil {
 		a.localval[v] = id
 	} else {
 		a.globalval[v] = id
@@ -181,7 +188,8 @@ func (a *analysis) valueNode(v ssa.Value) nodeid {
 		}
 		id = a.addNodes(v.Type(), comment)
 		if obj := a.objectNode(nil, v); obj != 0 {
-			a.addressOf(v.Type(), id, obj)
+			a.nodes[id].pts.add(obj)
+			a.worklist.add(id)
 		}
 		a.setValueNode(v, id, nil)
 	}
@@ -201,7 +209,7 @@ func (a *analysis) objectNode(func_node *funcnode, v ssa.Value) nodeid {
 				a.endObject(obj, nil, v)
 
 			case *ssa.Function:
-				obj = a.makeFunctionObject(v, nil)
+				obj = a.makeFunctionObject(v)
 
 			case *ssa.Const:
 				// not addressable
@@ -307,8 +315,9 @@ func (a *analysis) taggedValue(obj nodeid) (tDyn types.Type, v nodeid, indirect 
 	return n.typ, obj + 1, flags != 0
 }
 
-// funcParams returns the first node of the params (P) block of the
-// function whose object node (obj.flags&otFunction) is id.
+// here, the id denotes the start of a function block.
+// funcParams returns the first node of the params (P) block of the function.
+// note, the receiver denotes a param also, if exists
 func (a *analysis) funcParams(id nodeid) nodeid {
 	n := a.nodes[id]
 	if n.obj == nil || n.obj.tags&otFunction == 0 {
@@ -317,8 +326,7 @@ func (a *analysis) funcParams(id nodeid) nodeid {
 	return id + 1
 }
 
-// funcResults returns the first node of the results (R) block of the
-// function whose object node (obj.flags&otFunction) is id.
+// funcResults returns the first node of the results (R) block of the function
 func (a *analysis) funcResults(id nodeid) nodeid {
 	n := a.nodes[id]
 	if n.obj == nil || n.obj.tags&otFunction == 0 {
@@ -339,14 +347,14 @@ func (a *analysis) funcResults(id nodeid) nodeid {
 // makeFunctionObject creates and returns a new function object with context (callstring).
 // related to a funcnode.
 // if we can find it in csfuncobj   map[ssa.Value]map[context]nodeid, there is no need to call addreachable
-func (a *analysis) makeFunctionObject(fn *ssa.Function, callersite *callsite) nodeid {
+func (a *analysis) makeFunctionObject(fn *ssa.Function) nodeid {
 	if a.log != nil {
 		fmt.Fprintf(a.log, "\t---- makeFunctionObject %s\n", fn)
 	}
 
 	// obj is the function object (identity, params, results).
 	obj := a.nextNode()
-	cgn := a.makeCGNode(fn, obj, callersite)
+	//cgn := a.makeCGNode(fn, obj, callersite)
 	sig := fn.Signature
 	a.addOneNode(sig, "func.cgnode", nil) // (scalar with Signature type)
 	if recv := sig.Recv(); recv != nil {
@@ -354,7 +362,7 @@ func (a *analysis) makeFunctionObject(fn *ssa.Function, callersite *callsite) no
 	}
 	a.addNodes(sig.Params(), "func.params")
 	a.addNodes(sig.Results(), "func.results")
-	a.endObject(obj, cgn, fn).tags |= otFunction
+	a.endObject(obj, nil, fn).tags |= otFunction
 
 	if a.log != nil {
 		fmt.Fprintf(a.log, "\t----\n")
@@ -483,4 +491,20 @@ func (a *analysis) flatten(t types.Type) []*subEleInfo {
 	}
 
 	return fl
+}
+
+// path returns a user-friendly string describing the subelement path.
+func (fi *subEleInfo) path() string {
+	var buf bytes.Buffer
+	for p := fi; p != nil; p = p.tail {
+		switch op := p.op.(type) {
+		case bool:
+			fmt.Fprintf(&buf, "[*]")
+		case int:
+			fmt.Fprintf(&buf, "#%d", op)
+		case *types.Var:
+			fmt.Fprintf(&buf, ".%s", op.Name())
+		}
+	}
+	return buf.String()
 }
