@@ -22,23 +22,20 @@ func (a *analysis) addReachable(fc funcnode) {
 	}
 }
 
-func (a *analysis) propagate() {
+func (a *analysis) propagate(n *node, delta *nodeset) {
+	n.prev_pts.Copy(&n.pts.Sparse)
 
-}
-
-// ------------- deal with function call ------------------
-// with selective context sisitivity applied, see whether there exists a relavant funcnode
-
-func (a *analysis) solveStaticCall() {
-
-}
-
-func (a *analysis) solveInterfaceDynamicCall() {
-
-}
-
-func (a *analysis) solveFpDynamicCall() {
-
+	var copySeen nodeset
+	for _, x := range n.flow_to.AppendTo(a.deltaSpace) {
+		mid := nodeid(x)
+		if copySeen.add(mid) {
+			if a.nodes[mid].pts.addAll(delta) {
+				a.addWork(mid)
+			}
+		} else {
+			fmt.Println("????? duplication???s")
+		}
+	}
 }
 
 func (a *analysis) solve() {
@@ -77,6 +74,71 @@ func (a *analysis) solve() {
 			}
 			a.csfuncobj[fn][new_context] = new_func_obj_id
 			a.addReachable(funcnode{fn, new_func_obj_id, new_context})
+		}
+	}
+
+	// ------------ worklist iteration -----------------
+	if a.log != nil {
+		fmt.Fprintf(a.log, "\n\n----- Solving through worklist ---------\n\n")
+	}
+
+	var delta nodeset
+	for {
+		var x int
+		if !a.worklist.TakeMin(&x) {
+			break // empty
+		}
+		id := nodeid(x)
+		if a.log != nil {
+			fmt.Fprintf(a.log, "\ttake node n%d\n", id)
+		}
+
+		n := a.nodes[id]
+
+		// Difference propagation.
+		delta.Difference(&n.pts.Sparse, &n.prev_pts.Sparse)
+		if delta.IsEmpty() {
+			continue
+		}
+		a.propagate(n, &delta)
+
+		if a.log != nil {
+			fmt.Fprintf(a.log, "\t\tpts(n%d : %s) = %s + %s\n",
+				id, n.typ, &delta, &n.pts)
+		}
+
+		// Apply all resolution rules attached to n.
+		for _, rule := range n.fly_solve {
+			if a.log != nil {
+				fmt.Fprintf(a.log, "\t\trule %s\n", rule)
+			}
+			rule.addflow(a, &delta)
+		}
+
+		if a.log != nil {
+			fmt.Fprintf(a.log, "\t\tpts(n%d) = %s\n", id, &n.pts)
+		}
+	}
+
+	if !a.nodes[0].pts.IsEmpty() {
+		panic(fmt.Sprintf("pts(0) is nonempty: %s", &a.nodes[0].pts))
+	}
+
+	// Release working state (but keep final PTS).
+	for _, n := range a.nodes {
+		n.fly_solve = nil
+		n.flow_to.Clear()
+		n.prev_pts.Clear()
+	}
+
+	if a.log != nil {
+		fmt.Fprintf(a.log, "Solver done\n")
+
+		// Dump solution.
+		for i, n := range a.nodes {
+			if !n.pts.IsEmpty() {
+				fmt.Fprintf(a.log, "pts(n%d) = %s : %s\n", i, &n.pts, n.typ)
+			}
 		}
 	}
 
