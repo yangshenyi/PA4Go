@@ -13,40 +13,7 @@ import (
 )
 
 func main() {
-	const myprog = `
-	package main
 
-	import "fmt"
-	
-	type I interface {
-		f(map[string]int)
-	}
-	
-	type C struct{}
-	func (C) f(m map[string]int) {
-		fmt.Println("C.f()")
-	}
-	
-	type B struct{}
-	func (B) f(m map[string]int) {
-		fmt.Println("B.f()")
-	}
-	
-	func test_context(it I)I{
-		return it
-	}
-	
-	func main() {
-		var i I = C{}
-		
-		x := map[string]int{"one":1}
-		test_context(i).f(x)
-	
-		i = B{}
-		test_context(i).f(x)
-	
-	}
-`
 	/*
 	   闭包 绑定函数
 	   res --> fn obj
@@ -73,13 +40,13 @@ func main() {
 
 	// Parse the input file, a string.
 	// (Command-line tools should use conf.FromArgs.)
-	file, err := conf.ParseFile("myprog.go", myprog)
+	file, err := conf.ParseFile("myprog.go", myprog_interface_invoke)
 	if err != nil {
 		fmt.Print(err) // parse error
 		return
 	}
 
-	conf.CreateFromFiles("main", file)
+	conf.CreateFromFiles("mytest", file)
 	iprog, err := conf.Load()
 	if err != nil {
 		fmt.Print(err)
@@ -90,7 +57,7 @@ func main() {
 	mainPkg := prog.Package(iprog.Created[0].Pkg)
 
 	prog.Build()
-
+	fmt.Println(mainPkg.Members)
 	mainPkg.WriteTo(os.Stdout)
 	for _, mem := range mainPkg.Members {
 		if fun, ok := mem.(*ssa.Function); ok {
@@ -108,7 +75,7 @@ func main() {
 		}
 	}
 
-	result, err := pa.Analyze(prog, nil, []*ssa.Package{mainPkg})
+	result, err := pa.Analyze(prog, nil, []*ssa.Package{mainPkg}, nil)
 	if err != nil {
 		panic(err)
 	}

@@ -61,23 +61,6 @@ type node struct {
 
 // A subEleInfo describes one subelement (node) of the flattening-out
 // of a type T: the subelement's type and its path from the root of T.
-//
-// For example, for this type:
-//
-//	type line struct{ points []struct{x, y int} }
-//
-// flatten() of the inner struct yields the following []subEleInfo:
-//
-//	struct{ x, y int }                      ""
-//	int                                     ".x"
-//	int                                     ".y"
-//
-// and flatten(line) yields:
-//
-//	struct{ points []struct{x, y int} }     ""
-//	struct{ x, y int }                      ".points[*]"
-//	int                                     ".points[*].x
-//	int                                     ".points[*].y"
 type subEleInfo struct {
 	typ types.Type
 
@@ -110,12 +93,6 @@ func (a *analysis) addNodes(typ types.Type, comment string) nodeid {
 }
 
 // addOneNode creates a single node with type typ, and returns its id.
-//
-// typ should generally be scalar (except for tagged.T nodes
-// and struct/array identity nodes).  Use addNodes for non-scalar types.
-//
-// comment explains the origin of the nodes, as a debugging aid.
-// subelement indicates the subelement, e.g. ".a.b[*].c".
 func (a *analysis) addOneNode(typ types.Type, comment string, subelement *subEleInfo) nodeid {
 	id := a.nextNode()
 	a.nodes = append(a.nodes, &node{typ: typ, sub_element: subelement, fly_solve: make([]rule, 0)})
@@ -139,8 +116,7 @@ func (a *analysis) setValueNode(v ssa.Value, id nodeid, cfc *funcnode) {
 	}
 }
 
-// endObject marks the end of a sequence of calls to addNodes denoting
-// a single object allocation.
+// endObject denotes a single object allocation.
 //
 // obj is the start node of the object, from a prior call to nextNode.
 // Its size, flags and optional data will be updated.
@@ -171,8 +147,7 @@ func (a *analysis) makeTagged(typ types.Type, func_node *funcnode, data interfac
 }
 
 // valueNode returns the id of the value node for v, creating it (and
-// the association) as needed.  It may return zero for uninteresting
-// values containing no pointers.
+// the association) as needed.
 func (a *analysis) valueNode(v ssa.Value) nodeid {
 	// Value nodes for locals are created en masse by genFunc.
 	if id, ok := a.localval[v]; ok {
@@ -180,6 +155,7 @@ func (a *analysis) valueNode(v ssa.Value) nodeid {
 	}
 
 	// Value nodes for globals are created on demand.
+	// especially for function, more like a temp to hold fn ir code
 	id, ok := a.globalval[v]
 	if !ok {
 		var comment string
@@ -211,10 +187,7 @@ func (a *analysis) objectNode(func_node *funcnode, v ssa.Value) nodeid {
 			case *ssa.Function:
 				obj = a.makeFunctionObject(v)
 
-			case *ssa.Const:
-				// not addressable
-
-			case *ssa.FreeVar:
+			case *ssa.Const, *ssa.FreeVar:
 				// not addressable
 			}
 
@@ -274,10 +247,6 @@ func (a *analysis) objectNode(func_node *funcnode, v ssa.Value) nodeid {
 		case *ssa.Slice:
 			obj = a.objectNode(func_node, v.X)
 
-		case *ssa.Convert:
-			// TODO(adonovan): opt: handle these cases too:
-			// - unsafe.Pointer->*T conversion acts like Alloc
-			// - string->[]byte/[]rune conversion acts like MakeSlice
 		}
 
 		if a.log != nil {
@@ -376,7 +345,7 @@ func mustDeref(typ types.Type) types.Type {
 	return typ.Underlying().(*types.Pointer).Elem()
 }
 
-// sizeof returns the number of pointerlike abstractions (nodes) in the type t.
+// sizeof returns the number nodes in the type t.
 func (a *analysis) sizeof(t types.Type) uint32 {
 	return uint32(len(a.flatten(t)))
 }
@@ -407,16 +376,8 @@ func sliceToArray(slice types.Type) *types.Array {
 	return types.NewArray(slice.Underlying().(*types.Slice).Elem(), 1)
 }
 
-// flatten returns a list of directly contained fields in the preorder
-// traversal of the type tree of t.  The resulting elements are all
-// scalars (basic types or pointerlike types), except for struct/array
-// "identity" nodes, whose type is that of the aggregate.
-//
-// reflect.Value is considered pointerlike, similar to interface{}.
-//
-// Callers must not mutate the result.
 func (a *analysis) flatten(t types.Type) []*subEleInfo {
-	fl, ok := a.flattenMemo[t]
+	fl, ok := a.flattenBuf[t]
 	if !ok {
 		switch t := t.(type) {
 		case *types.Named:
@@ -474,13 +435,12 @@ func (a *analysis) flatten(t types.Type) []*subEleInfo {
 			panic(fmt.Sprintf("cannot flatten unsupported type %T", t))
 		}
 
-		a.flattenMemo[t] = fl
+		a.flattenBuf[t] = fl
 	}
 
 	return fl
 }
 
-// path returns a user-friendly string describing the subelement path.
 func (fi *subEleInfo) path() string {
 	var buf bytes.Buffer
 	for p := fi; p != nil; p = p.tail {

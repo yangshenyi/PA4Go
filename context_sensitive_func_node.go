@@ -38,7 +38,7 @@ type funcnode struct {
 	func_context context
 }
 
-// wrapper. duplicate edges  due to the elimination of context
+// wrapper. duplicate edges due to the elimination of context
 func (a *analysis) addCallGraphEdge(caller *ssa.Function, callsite ssa.CallInstruction, callee *ssa.Function) {
 	if _, ok := a.callgraph[caller]; !ok {
 		a.callgraph[caller] = make(map[ssa.CallInstruction]map[*ssa.Function]bool)

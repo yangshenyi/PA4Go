@@ -12,11 +12,11 @@ import (
 
 // ---------- rule creation ----------
 
-// copy creates a constraint of the form dst = src.
-// sizeof is the width (in logical fields) of the copied type.
+// add point-to flow.
+// sizeof is the width of the src type.
 func (a *analysis) addflow(dst, src nodeid, sizeof uint32, instr ssa.Value) {
 	if src == dst || sizeof == 0 {
-		return // trivial
+		return
 	}
 	if src == 0 || dst == 0 {
 		panic(fmt.Sprintf("ill-typed copy dst=n%d src=n%d", dst, src))
@@ -24,9 +24,8 @@ func (a *analysis) addflow(dst, src nodeid, sizeof uint32, instr ssa.Value) {
 	a.auxaddflowN(dst, src, sizeof)
 }
 
-// typeAssert creates a typeFilter or untag constraint of the form dst = src.(T):
+// typeAssert creates a typeFilter or untag rule of the form dst = src.(T):
 // typeFilter for an interface, untag for a concrete type.
-// The exact flag is specified as for untagConstraint.
 func (a *analysis) typeAssert(T types.Type, dst, src nodeid, exact bool) {
 	if isInterface(T) {
 		a.nodes[src].fly_solve = append(a.nodes[src].fly_solve, &typeFilterRule{T, dst})
@@ -35,8 +34,7 @@ func (a *analysis) typeAssert(T types.Type, dst, src nodeid, exact bool) {
 	}
 }
 
-// copyElems generates load/store constraints for *dst = *src,
-// where src and dst are slices or *arrays.
+// src and dst are slices or *arrays.
 func (a *analysis) copyElems(cgn *funcnode, typ types.Type, dst, src ssa.Value) {
 	tmp := a.addNodes(typ, "copy")
 	sz := a.sizeof(typ)
@@ -44,11 +42,11 @@ func (a *analysis) copyElems(cgn *funcnode, typ types.Type, dst, src ssa.Value) 
 	a.genStore(a.valueNode(dst), tmp, 1, sz)
 }
 
-// genConv generates constraints for the conversion operation conv.
+// genConv generates rules for the conversion operation conv.
 func (a *analysis) genConv(conv *ssa.Convert, cfc *funcnode) {
 	res := a.valueNode(conv)
 	if res == 0 {
-		return // result is non-pointerlike
+		return
 	}
 
 	tSrc := conv.X.Type()
@@ -56,13 +54,12 @@ func (a *analysis) genConv(conv *ssa.Convert, cfc *funcnode) {
 
 	switch utSrc := tSrc.Underlying().(type) {
 	case *types.Slice:
-		// []byte/[]rune -> string?
 		return
 
 	case *types.Pointer:
 		// *T -> unsafe.Pointer?
 		if tDst.Underlying() == tUnsafePtr {
-			return // we don't model unsafe aliasing (unsound)
+			return // (unsound abandon)
 		}
 
 	case *types.Basic:
@@ -129,12 +126,10 @@ func (a *analysis) genAppend(instr *ssa.Call, cgn *funcnode) {
 	a.worklist.add(a.valueNode(z))
 }
 
-// genBuiltinCall generates contraints for a call to a built-in.
 func (a *analysis) genBuiltinCall(instr ssa.CallInstruction, cgn *funcnode) {
 	call := instr.Common()
 	switch call.Value.(*ssa.Builtin).Name() {
 	case "append":
-		// Safe cast: append cannot appear in a go or defer statement.
 		a.genAppend(instr.(*ssa.Call), cgn)
 
 	case "copy":
@@ -142,7 +137,7 @@ func (a *analysis) genBuiltinCall(instr ssa.CallInstruction, cgn *funcnode) {
 		a.copyElems(cgn, tElem, call.Args[0], call.Args[1])
 
 	case "panic":
-		a.addflow(a.panicNode, a.valueNode(call.Args[0]), 1, call.Value) // z = x
+		a.addflow(a.panicNode, a.valueNode(call.Args[0]), 1, call.Value)
 
 	case "recover":
 		if v := instr.Value(); v != nil {
@@ -150,8 +145,6 @@ func (a *analysis) genBuiltinCall(instr ssa.CallInstruction, cgn *funcnode) {
 		}
 
 	case "print":
-		// In the tests, the probe might be the sole reference
-		// to its arg, so make sure we create nodes for it.
 		if len(call.Args) > 0 {
 			a.valueNode(call.Args[0])
 		}
@@ -164,7 +157,7 @@ func (a *analysis) genBuiltinCall(instr ssa.CallInstruction, cgn *funcnode) {
 	}
 }
 
-// genStaticCall generates constraints for a statically dispatched function call.
+// for statically dispatched function call.
 func (a *analysis) genStaticCall(caller *funcnode, site ssa.CallInstruction, call *ssa.CallCommon, result nodeid) {
 	fn := call.StaticCallee()
 
@@ -225,7 +218,7 @@ func (a *analysis) genStaticCall(caller *funcnode, site ssa.CallInstruction, cal
 	if sig.Recv() != nil {
 		sz := a.sizeof(sig.Recv().Type())
 		a.addflow(params, a.valueNode(args[0]), sz, call.Value)
-		params += nodeid(sz) // add params, cause receiver is the first param, but not args
+		params += nodeid(sz)
 		args = args[1:]
 	}
 
@@ -243,11 +236,8 @@ func (a *analysis) genStaticCall(caller *funcnode, site ssa.CallInstruction, cal
 
 }
 
-// genDynamicCall generates constraints for a dynamic function call.
+// for a dynamic function call, function pointer.
 func (a *analysis) genDynamicCall(caller *funcnode, site ssa.CallInstruction, call *ssa.CallCommon, result nodeid) {
-	// We add dynamic closure rules that store the arguments into
-	// the P-block and load the results from the R-block of each
-	// function discovered in pts(targets).
 
 	sig := call.Signature()
 
@@ -267,13 +257,10 @@ func (a *analysis) genDynamicCall(caller *funcnode, site ssa.CallInstruction, ca
 		a.addflow(result, r, a.sizeof(sig.Results()), call.Value)
 	}
 
-	// We add a dynamic invoke constraint that will connect the
-	// caller's and the callee's P/R blocks for each discovered
-	// call target.
 	a.nodes[a.valueNode(call.Value)].fly_solve = append(a.nodes[a.valueNode(call.Value)].fly_solve, &fpRule{caller, site, block})
 }
 
-// genInvoke generates constraints for a dynamic method invocation.
+// for a dynamic method invocation, interface.
 func (a *analysis) genInvoke(caller *funcnode, site ssa.CallInstruction, call *ssa.CallCommon, result nodeid) {
 
 	sig := call.Signature()
@@ -294,17 +281,13 @@ func (a *analysis) genInvoke(caller *funcnode, site ssa.CallInstruction, call *s
 		a.addflow(result, r, a.sizeof(sig.Results()), call.Value)
 	}
 
-	// We add a dynamic invoke constraint that will connect the
-	// caller's and the callee's P/R blocks for each discovered
-	// call target.
 	a.nodes[a.valueNode(call.Value)].fly_solve = append(a.nodes[a.valueNode(call.Value)].fly_solve, &invokeRule{caller, site, call.Method, block})
 }
 
-// genCall generates constraints for call instruction instr.
+// \for call instruction instr.
 func (a *analysis) genCall(cfc *funcnode, instr ssa.CallInstruction) {
 	call := instr.Common()
 
-	// Intrinsic implementations of built-in functions.
 	if _, ok := call.Value.(*ssa.Builtin); ok {
 		a.genBuiltinCall(instr, cfc)
 		return
@@ -354,8 +337,6 @@ func (a *analysis) genOffsetAddr(dst nodeid, ptr nodeid, offset uint32) {
 	if offset == 0 {
 		// Simplify  dst = &src->f0
 		//       to  dst = src
-		// (NB: this optimisation is defeated by the identity
-		// field prepended to struct and array objects.)
 		a.addflow(dst, ptr, 1, nil)
 	} else {
 		a.nodes[ptr].fly_solve = append(a.nodes[ptr].fly_solve, &offsetAddrRule{offset, dst})
@@ -507,6 +488,7 @@ func (a *analysis) genInstr(cfc *funcnode, instr ssa.Instruction) {
 		fn := instr.Fn.(*ssa.Function)
 		a.addflow(a.valueNode(instr), a.valueNode(fn), 1, instr)
 		// Free variables are treated like global variables.
+		// thus, for later called closure, the free vars need to be "flush", to pass flow it carries
 		for i, b := range instr.Bindings {
 			a.addflow(a.valueNode(fn.FreeVars[i]), a.valueNode(b), a.sizeof(b.Type()), instr)
 		}
@@ -567,7 +549,7 @@ func (a *analysis) genInstr(cfc *funcnode, instr ssa.Instruction) {
 	}
 }
 
-// genFunc generates rules for function fn.
+// generates rules for function fn.
 func (a *analysis) genFunc(cfc *funcnode) {
 	fn := cfc.fn
 
@@ -581,6 +563,7 @@ func (a *analysis) genFunc(cfc *funcnode) {
 	if strings.HasPrefix(fn.Synthetic, "instantiation wrapper ") {
 		return
 	}
+
 	// Each time we analyze a new func with context, we allocate a new buffer
 	a.localval = make(map[ssa.Value]nodeid)
 	a.localobj = make(map[ssa.Value]nodeid)

@@ -55,30 +55,23 @@ func (a *analysis) solve() {
 	a.callgraph = make(map[*ssa.Function]map[ssa.CallInstruction]map[*ssa.Function]bool)
 	a.callgraph[root_func] = make(map[ssa.CallInstruction]map[*ssa.Function]bool)
 
-	// addreachable for entry point func
-	// For each main package, call main.init(), main.main().
-	for _, mainPkg := range a.mains {
-		main := mainPkg.Func("main")
-		if main == nil {
-			panic(fmt.Sprintf("%s has no main function", mainPkg))
-		}
+	for _, entry := range a.entryfuns {
 
-		for _, fn := range [2]*ssa.Function{mainPkg.Func("init"), main} {
-			if a.log != nil {
-				fmt.Fprintf(a.log, "\troot call to %s:\n", fn)
-			}
-			a.addCallGraphEdge(root_func, nil, fn)
-			if a.log != nil {
-				fmt.Fprintf(a.log, "\tCallGraph: %s --> %s:\n", root_func.Name(), fn.Name())
-			}
-			new_func_obj_id := a.makeFunctionObject(fn)
-			new_context := NewContext()
-			if _, ok := a.csfuncobj[fn]; !ok {
-				a.csfuncobj[fn] = make(map[context]nodeid)
-			}
-			a.csfuncobj[fn][new_context] = new_func_obj_id
-			a.addReachable(funcnode{fn, new_func_obj_id, new_context})
+		if a.log != nil {
+			fmt.Fprintf(a.log, "\troot call to %s:\n", entry)
 		}
+		a.addCallGraphEdge(root_func, nil, entry)
+		if a.log != nil {
+			fmt.Fprintf(a.log, "\tCallGraph: %s --> %s:\n", root_func.Name(), entry.Name())
+		}
+		new_func_obj_id := a.makeFunctionObject(entry)
+		new_context := NewContext()
+		if _, ok := a.csfuncobj[entry]; !ok {
+			a.csfuncobj[entry] = make(map[context]nodeid)
+		}
+		a.csfuncobj[entry][new_context] = new_func_obj_id
+		a.addReachable(funcnode{entry, new_func_obj_id, new_context})
+
 	}
 
 	// ------------ worklist iteration -----------------
