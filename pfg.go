@@ -298,11 +298,6 @@ func (a *analysis) valueOffsetNode(v ssa.Value, index int) nodeid {
 	return id + nodeid(a.offsetOf(v.Type(), index))
 }
 
-// isTaggedObject reports whether object obj is a tagged object.
-func (a *analysis) isTaggedObject(obj nodeid) bool {
-	return a.nodes[obj].obj.tags&otTagged != 0
-}
-
 // taggedValue returns the dynamic type tag, the (first node of the)
 // payload, and the indirect flag of the tagged object starting at id.
 // Panic ensues if !isTaggedObject(id).
@@ -379,14 +374,6 @@ func isInterface(T types.Type) bool { return types.IsInterface(T) }
 // pointer; panic ensues otherwise.
 func mustDeref(typ types.Type) types.Type {
 	return typ.Underlying().(*types.Pointer).Elem()
-}
-
-// deref returns a pointer's element type; otherwise it returns typ.
-func deref(typ types.Type) types.Type {
-	if p, ok := typ.Underlying().(*types.Pointer); ok {
-		return p.Elem()
-	}
-	return typ
 }
 
 // sizeof returns the number of pointerlike abstractions (nodes) in the type t.

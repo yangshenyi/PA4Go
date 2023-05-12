@@ -303,9 +303,13 @@ func (c *fpRule) addflow(a *analysis, delta *nodeset) {
 			// Add newly added funcnode into reachable queue
 			a.addReachable(*new_funcnode)
 		}
+		fmt.Println(newly_add, fn.Signature, fn.Name(), fn.FreeVars)
 
 		a.addCallGraphEdge(c.caller.fn, c.site, fn)
-
+		for _, fre := range fn.FreeVars {
+			a.nodes[a.valueNode(fre)].prev_pts.Clear()
+			a.worklist.add(a.valueNode(fre))
+		}
 		src := c.params
 		dst := a.funcParams(obj)
 

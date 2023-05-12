@@ -14,51 +14,34 @@ import (
 
 func main() {
 	const myprog = `
-package main
+	package main
 
-import "fmt"
-
-type I interface {
-	f(map[string]int)
-}
-
-type C struct{}
-
-func inc(func1 func(int)int){
-	var func2 func(int)
-	func2 = func(x int){
-		if x==0 {
-			return
+	
+	func void_ (a func(int)){ a(5)}
+	func test_fp(func1 func(int)int){
+		
+		is_ok := func(x int)bool{
+			return true
 		}
-		func2(x-1)
-		_ = func1(5)            
+
+		void_( func(x int){
+			if is_ok(x) {
+				return 
+			}		
+			_ = func1(5)
+		})
+		
+		
 	}
-
-	func2(5)
-}
-
-func (C) f(m map[string]int) {
-	fmt.Println("C.f()")
-}
-
-type B struct{}
-func (B) f(m map[string]int) {
-	fmt.Println("B.f()")
-}
-
-
-func main() {
-	var i I = C{}
-	x := map[string]int{"one":1}
-	i.f(x) // dynamic method call
-	k:=5
-	inc(func(x int)int{return x+1})
-	_ = k
-}
-
+	
+	
+	func main() {
+	
+		test_fp(func(x int)int{return x+1})	
+	}
 `
-	/*
 
+	/*
 	   inc
 
 	   inc$1
@@ -66,8 +49,8 @@ func main() {
 	   #   0:	func2 *func(int) --> t2 --> fn inc$1
 	   #   1:	func1 *func(int) int --> func1 --> main$1
 
-	   t1 <== t1	==>	t1->inc$1
-	   t4 <== func1	==>	t4->main$1
+	   t1 <== t2		==>		t1 --> inc$1
+	   t4 <== func1		==>		t4 --> main$1
 
 	*/
 	var conf loader.Config
@@ -101,7 +84,7 @@ func main() {
 	for _, mem := range mainPkg.Members {
 		if fun, ok := mem.(*ssa.Function); ok {
 			fun.WriteTo(os.Stdout)
-			if fun.Name() == "inc" {
+			if fun.Name() == "test_fp" {
 				fmt.Println(1)
 				for _, block := range fun.Blocks {
 					for _, instr := range block.Instrs {
@@ -115,7 +98,7 @@ func main() {
 		}
 	}
 
-	result, err := pa.Analyze(prog, nil, []*ssa.Package{mainPkg})
+	result, err := pa.Analyze(prog, os.Stdout, []*ssa.Package{mainPkg})
 	if err != nil {
 		panic(err) // internal error in pointer analysis
 	}
@@ -124,7 +107,7 @@ func main() {
 	callgraph.GraphVisitEdges(result, func(edge *callgraph.Edge) error {
 		caller := edge.Caller.Func
 		if caller.Pkg == mainPkg {
-			edges = append(edges, fmt.Sprint(caller, " --> ", edge.Callee.Func))
+			edges = append(edges, fmt.Sprint(caller, " --> ", edge.Callee.Func, " line: ", prog.Fset.Position(edge.Pos()).Line))
 		}
 		return nil
 	})

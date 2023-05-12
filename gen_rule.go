@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
+	"strings"
 
 	"github.com/yangshenyi/PA4Go/vendo/typeparams"
 	"golang.org/x/tools/go/ssa"
@@ -20,14 +21,7 @@ func (a *analysis) addflow(dst, src nodeid, sizeof uint32, instr ssa.Value) {
 	if src == 0 || dst == 0 {
 		panic(fmt.Sprintf("ill-typed copy dst=n%d src=n%d", dst, src))
 	}
-	for i := uint32(0); i < sizeof; i++ {
-		if src == 433970 {
-			fmt.Println(len(a.nodes), dst, src, sizeof, i, instr, a.prog.Fset.Position(instr.Pos()))
-		}
-		a.nodes[src].flow_to.add(dst)
-		src++
-		dst++
-	}
+	a.auxaddflowN(dst, src, sizeof)
 }
 
 // typeAssert creates a typeFilter or untag constraint of the form dst = src.(T):
@@ -259,8 +253,8 @@ func (a *analysis) genDynamicCall(caller *funcnode, site ssa.CallInstruction, ca
 
 	// Allocate a contiguous relay params/results block for this call.
 	block := a.nextNode()
-	p := a.addNodes(sig.Params(), "invoke.params")
-	r := a.addNodes(sig.Results(), "invoke.results")
+	p := a.addNodes(sig.Params(), "fp.params")
+	r := a.addNodes(sig.Results(), "fp.results")
 
 	// Copy the actual parameters into the call's params block.
 	for i, n := 0, sig.Params().Len(); i < n; i++ {
@@ -580,7 +574,13 @@ func (a *analysis) genFunc(cfc *funcnode) {
 	if a.log != nil {
 		fmt.Fprintln(a.log, "\tCreating nodes for local values of", cfc.func_context, cfc.fn.Name())
 	}
+	if fn.TypeParams().Len() > 0 && len(fn.TypeArgs()) == 0 {
+		return
+	}
 
+	if strings.HasPrefix(fn.Synthetic, "instantiation wrapper ") {
+		return
+	}
 	// Each time we analyze a new func with context, we allocate a new buffer
 	a.localval = make(map[ssa.Value]nodeid)
 	a.localobj = make(map[ssa.Value]nodeid)

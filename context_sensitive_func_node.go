@@ -9,36 +9,8 @@ import (
 // at least 1
 const level int = 1
 
-// shouldUseContext defines the context-sensitivity policy.  It
-// returns true if we should analyse all static calls to fn anew.
-//
-// Obviously this interface rather limits how much freedom we have to
-// choose a policy.  The current policy, rather arbitrarily, is true
-// for intrinsics and accessor methods (actually: short, single-block,
-// call-free functions).  This is just a starting point.
-// define whether a function should be treated with context sensitivity
+// selective context-sensitivity policy.
 func selectiveContextPolicy(fn *ssa.Function) bool {
-	/*
-		if len(fn.Blocks) != 1 {
-			return false // too expensive
-		}
-		blk := fn.Blocks[0]
-		if len(blk.Instrs) > 10 {
-			return false // too expensive
-		}
-		if fn.Synthetic != "" && (fn.Pkg == nil || fn != fn.Pkg.Func("init")) {
-			return true // treat synthetic wrappers context-sensitively
-		}
-		for _, instr := range blk.Instrs {
-			switch instr := instr.(type) {
-			case ssa.CallInstruction:
-				// Disallow function calls (except to built-ins)
-				// because of the danger of unbounded recursion.
-				if _, ok := instr.Common().Value.(*ssa.Builtin); !ok {
-					return false
-				}
-			}
-		}*/
 	return false
 }
 
