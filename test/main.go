@@ -16,31 +16,47 @@ func main() {
 	const myprog = `
 	package main
 
+	import "fmt"
 	
-	func void_ (a func(int)){ a(5)}
-	func test_fp(func1 func(int)int){
-		
-		is_ok := func(x int)bool{
-			return true
-		}
-
-		void_( func(x int){
-			if is_ok(x) {
-				return 
-			}		
-			_ = func1(5)
-		})
-		
-		
+	type I interface {
+		f(map[string]int)
 	}
 	
+	type C struct{}
+	func (C) f(m map[string]int) {
+		fmt.Println("C.f()")
+	}
+	
+	type B struct{}
+	func (B) f(m map[string]int) {
+		fmt.Println("B.f()")
+	}
+	
+	func test_context(it I)I{
+		return it
+	}
 	
 	func main() {
+		var i I = C{}
+		
+		x := map[string]int{"one":1}
+		test_context(i).f(x)
 	
-		test_fp(func(x int)int{return x+1})	
+		i = B{}
+		test_context(i).f(x)
+	
 	}
 `
+	/*
+	   闭包 绑定函数
+	   res --> fn obj
+	   freevar -->binding
 
+	   pass
+	   res ==> param
+	   take res node free var node 之后才能拿到 param node
+	   才能 add reachable，从 free var 拿对象
+	*/
 	/*
 	   inc
 
@@ -63,29 +79,23 @@ func main() {
 		return
 	}
 
-	// Create single-file main package and import its dependencies.
 	conf.CreateFromFiles("main", file)
-
 	iprog, err := conf.Load()
 	if err != nil {
-		fmt.Print(err) // type error in some package
+		fmt.Print(err)
 		return
 	}
 
-	// Create SSA-form program representation.
 	prog := ssautil.CreateProgram(iprog, ssa.InstantiateGenerics)
 	mainPkg := prog.Package(iprog.Created[0].Pkg)
 
-	// Build SSA code for bodies of all functions in the whole program.
 	prog.Build()
 
-	// print ssa
 	mainPkg.WriteTo(os.Stdout)
 	for _, mem := range mainPkg.Members {
 		if fun, ok := mem.(*ssa.Function); ok {
 			fun.WriteTo(os.Stdout)
 			if fun.Name() == "test_fp" {
-				fmt.Println(1)
 				for _, block := range fun.Blocks {
 					for _, instr := range block.Instrs {
 						if v, ok := instr.(*ssa.MakeClosure); ok {
@@ -98,9 +108,9 @@ func main() {
 		}
 	}
 
-	result, err := pa.Analyze(prog, os.Stdout, []*ssa.Package{mainPkg})
+	result, err := pa.Analyze(prog, nil, []*ssa.Package{mainPkg})
 	if err != nil {
-		panic(err) // internal error in pointer analysis
+		panic(err)
 	}
 
 	var edges []string
@@ -112,7 +122,6 @@ func main() {
 		return nil
 	})
 
-	// Print the edges in sorted order.
 	sort.Strings(edges)
 	for _, edge := range edges {
 		fmt.Println(edge)

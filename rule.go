@@ -306,10 +306,13 @@ func (c *fpRule) addflow(a *analysis, delta *nodeset) {
 		fmt.Println(newly_add, fn.Signature, fn.Name(), fn.FreeVars)
 
 		a.addCallGraphEdge(c.caller.fn, c.site, fn)
+
+		// flush freevars
 		for _, fre := range fn.FreeVars {
 			a.nodes[a.valueNode(fre)].prev_pts.Clear()
 			a.worklist.add(a.valueNode(fre))
 		}
+
 		src := c.params
 		dst := a.funcParams(obj)
 
