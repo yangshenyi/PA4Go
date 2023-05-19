@@ -62,6 +62,7 @@ func PrintOutput(
 	logf("no std packages: %v", nostd)
 
 	var isFocused = func(edge *callgraph.Edge) bool {
+
 		caller := edge.Caller
 		callee := edge.Callee
 		if focusPkg != nil && (caller.Func.Pkg.Pkg.Path() == focusPkg.Path() || callee.Func.Pkg.Pkg.Path() == focusPkg.Path()) {
@@ -102,6 +103,7 @@ func PrintOutput(
 
 	count := 0
 	err := callgraph.GraphVisitEdges(cg, func(edge *callgraph.Edge) error {
+		//fmt.Println(edge.Caller, edge.Description(), edge.Callee)
 		count++
 
 		caller := edge.Caller
@@ -280,7 +282,7 @@ func PrintOutput(
 		}
 		callerNode.Nodes = append(callerNode.Nodes, dotNode_call)
 		// omit duplicate calls, except for tooltip enhancements
-		key := fmt.Sprintf("%s = %s => %s", caller.Func, edge.Description(), callee.Func)
+		key := fmt.Sprintf("%s = %s => %s", caller.Func, prog.Fset.Position(edge.Pos()), callee.Func)
 		if _, ok := edgeMap[key]; !ok {
 			attrs["tooltip"] = fileEdge
 			e := &dotEdge{

@@ -42,7 +42,7 @@ func main() {
 
 	// Parse the input file, a string.
 	// (Command-line tools should use conf.FromArgs.)
-	file, err := conf.ParseFile("myprog.go", myprog_closure)
+	file, err := conf.ParseFile("myprog.go", myprog_context)
 	if err != nil {
 		fmt.Print(err) // parse error
 		return
