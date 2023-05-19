@@ -35,16 +35,6 @@ type typeFilterRule struct {
 	d   nodeid
 }
 
-// d = s.(typ)  where typ is a concrete type
-// A complex Rule attached to src (the interface).
-//
-// If exact, only tagged objects identical to typ are untagged.
-// If !exact, tagged objects assignable to typ are untagged too.
-// The latter is needed for various reflect operators, e.g. Send.
-//
-// This entails a representation change:
-// pts(src) contains tagged objects,
-// pts(dst) contains their payloads.
 type untagRule struct {
 	typ   types.Type // a concrete type
 	d     nodeid
@@ -153,12 +143,7 @@ func (c *untagRule) addflow(a *analysis, delta *nodeset) {
 	}
 	for _, x := range delta.AppendTo(a.deltaSpace) {
 		ifaceObj := nodeid(x)
-		tDyn, v, indirect := a.taggedValue(ifaceObj)
-		if indirect {
-			// TODO(adonovan): we'll need to implement this
-			// when we start creating indirect tagged objects.
-			panic("indirect tagged object")
-		}
+		tDyn, v, _ := a.taggedValue(ifaceObj)
 
 		if predicate(tDyn, c.typ) {
 			// Copy payload sans tag to dst.
@@ -255,6 +240,7 @@ func (c *invokeRule) addflow(a *analysis, delta *nodeset) {
 }
 
 func (c *fpRule) addflow(a *analysis, delta *nodeset) {
+
 	for _, x := range delta.AppendTo(a.deltaSpace) {
 		funcobj := nodeid(x)
 
@@ -307,11 +293,12 @@ func (c *fpRule) addflow(a *analysis, delta *nodeset) {
 
 		a.addCallGraphEdge(c.caller.fn, c.site, fn)
 
-		// flush freevars
-		for _, fre := range fn.FreeVars {
-			a.nodes[a.valueNode(fre)].prev_pts.Clear()
-			a.worklist.add(a.valueNode(fre))
-		}
+		/*
+			// flush freevars
+			for _, fre := range fn.FreeVars {
+				a.nodes[a.valueNode(fre)].prev_pts.Clear()
+				a.worklist.add(a.valueNode(fre))
+			}*/
 
 		src := c.params
 		dst := a.funcParams(obj)

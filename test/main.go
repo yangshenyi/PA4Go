@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	pa "github.com/yangshenyi/PA4Go"
+	visual "github.com/yangshenyi/PA4Go/visualize"
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/loader"
 	"golang.org/x/tools/go/ssa"
@@ -15,14 +16,15 @@ import (
 func main() {
 
 	/*
-	   闭包 绑定函数
-	   res --> fn obj
-	   freevar -->binding
+		再理解理解
+		   闭包 绑定函数
+		   res --> fn obj
+		   freevar -->binding
 
-	   pass
-	   res ==> param
-	   take res node free var node 之后才能拿到 param node
-	   才能 add reachable，从 free var 拿对象
+		   pass
+		   res ==> param
+		   take res node free var node 之后才能拿到 param node
+		   才能 add reachable，从 free var 拿对象
 	*/
 	/*
 	   inc
@@ -46,7 +48,7 @@ func main() {
 		return
 	}
 
-	conf.CreateFromFiles("mytest", file)
+	conf.CreateFromFiles("main", file)
 	iprog, err := conf.Load()
 	if err != nil {
 		fmt.Print(err)
@@ -64,10 +66,30 @@ func main() {
 			fun.WriteTo(os.Stdout)
 			if fun.Name() == "test_fp" {
 				for _, block := range fun.Blocks {
+
 					for _, instr := range block.Instrs {
 						if v, ok := instr.(*ssa.MakeClosure); ok {
 							v.Fn.(*ssa.Function).WriteTo(os.Stdout)
-							fmt.Println(v.Bindings)
+							fmt.Println(v.Bindings, v.Fn.Name(), v.Fn.(*ssa.Function).Pkg.Pkg.Path(), v.Fn.(*ssa.Function).Parent().Pkg.Pkg.Path())
+						}
+					}
+				}
+			}
+			if fun.Name() == "main" {
+				for _, block := range fun.Blocks {
+					for _, instr := range block.Instrs {
+						if v, ok := instr.(*ssa.Field); ok {
+							fmt.Println(v.Field, v.X.Type())
+						}
+
+						if v, ok := instr.(*ssa.FieldAddr); ok {
+							fmt.Println("addr", v.Field, v.X.Type())
+						}
+						if v, ok := instr.(*ssa.Index); ok {
+							fmt.Println("index", v.X.Type())
+						}
+						if v, ok := instr.(*ssa.IndexAddr); ok {
+							fmt.Println("indexaddr", v.X.Type())
 						}
 					}
 				}
@@ -94,6 +116,7 @@ func main() {
 		fmt.Println(edge)
 	}
 	fmt.Println()
+	visual.PrintOutput(prog, mainPkg, result, nil, true, false)
 
 }
 
@@ -188,28 +211,33 @@ package main
 
 import  "fmt"
 
-func static(ok func(x int)bool){ if ok(2){ fmt.Println("1")}}
+type testglobal struct{
+	f func(int)
+}
+var a testglobal
 
-func void_ (a func(int)){ a(5)}
-
-func test_fp(func1 func(int)int){
-	
-	is_ok := func(x int)bool{
-		return true
-	}
-
-	void_( func(x int){
-		if is_ok(x) {
-			static(is_ok)
-			return 
-		}		
-		_ = func1(5)
-	})
+type iface interface{
+	Ha()
 }
 
+type ia struct{}
+func (a ia)Ha(){fmt.Println(a)}
+
+type ib struct{}
+func (b ib)Ha(){fmt.Println(b)}
+
+func static_test_function_value(fp func(int)){ fp(-1) } // call mode
+func dynamic_after_static(){ a.f(2) } // call mode & 全局变量
 
 func main() {
-	test_fp(func(x int)int{return x+1})	
+	a.f = func(x int){fmt.Println(x)}
+	var iv iface = ia{}
+	free_var := func(iv iface){ iv.Ha() }	// invoke mode
+
+	static_test_function_value( func(x int){
+		free_var(iv)			// 闭包自由变量绑定
+		dynamic_after_static() 			
+	})	
 }
 `
 

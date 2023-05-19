@@ -20,6 +20,14 @@ func (a *analysis) addReachable(fc funcnode) {
 		a.reachable_queue = a.reachable_queue[1:]
 		a.genFunc(cfc)
 	}
+
+	for _, x := range a.globalflushbuf.AppendTo(a.flushSpace) {
+		a.nodes[nodeid(x)].prev_pts.Clear()
+		a.worklist.add(nodeid(x))
+	}
+	a.globalflushbuf.Clear()
+	a.flushSpace = a.flushSpace[:0]
+
 }
 
 // one level spread

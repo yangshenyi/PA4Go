@@ -1,4 +1,4 @@
-package dot
+package visual
 
 import (
 	"bytes"
@@ -13,30 +13,37 @@ import (
 )
 
 var (
-	minlen    uint
-	nodesep   float64
-	nodeshape string
-	nodestyle string
-	rankdir   string
+	minlen    uint    = 2
+	nodesep   float64 = 0.35
+	nodeshape string  = "box"
+	nodestyle string  = "filled,rounded"
+	rankdir   string  = "LR"
 )
 
 const tmplCluster = `{{define "cluster" -}}
     {{printf "subgraph %q {" .}}
         {{printf "%s" .Attrs.Lines}}
-        {{range .Nodes}}
-        {{template "node" .}}
-        {{- end}}
-        {{range .Clusters}}
-        {{template "cluster" .}}
+        {{range .Funcs}}
+        {{template "clusterf" .}}
         {{- end}}
     {{println "}" }}
 {{- end}}`
 
-const tmplNode = `{{define "edge" -}}
+const tmplFCluster = `{{define "clusterf" -}}
+    {{printf "subgraph %q {" .}}
+        {{printf "%s" .Attrs.Lines}}
+		{{template "node" .NodeI}}
+        {{range .Nodes}}
+        {{template "node" .}}
+        {{- end}}
+    {{println "}" }}
+{{- end}}`
+
+const tmplEdge = `{{define "edge" -}}
     {{printf "%q -> %q [ %s ]" .From .To .Attrs}}
 {{- end}}`
 
-const tmplEdge = `{{define "node" -}}
+const tmplNode = `{{define "node" -}}
     {{printf "%q [ %s ]" .ID .Attrs}}
 {{- end}}`
 
@@ -55,7 +62,9 @@ const tmplGraph = `digraph gocallvis {
     node [shape="{{.Options.nodeshape}}" style="{{.Options.nodestyle}}" fillcolor="honeydew" fontname="Verdana" penwidth="1.0" margin="0.05,0.0"];
     edge [minlen="{{.Options.minlen}}"]
 
-    {{template "cluster" .Cluster}}
+	{{range .Clusters}}
+        {{template "cluster" .}}
+    {{- end}}
 
     {{- range .Edges}}
     {{template "edge" .}}
@@ -64,23 +73,43 @@ const tmplGraph = `digraph gocallvis {
 `
 
 // ==[ type def/func: dotCluster ]===============================================
-type dotCluster struct {
-	ID       string
-	Clusters map[string]*dotCluster
-	Nodes    []*dotNode
-	Attrs    dotAttrs
+type dotPCluster struct {
+	ID    string
+	Funcs []*dotFCluster
+	Attrs dotAttrs
 }
 
-func NewDotCluster(id string) *dotCluster {
-	return &dotCluster{
-		ID:       id,
-		Clusters: make(map[string]*dotCluster),
-		Attrs:    make(dotAttrs),
+func NewDotPCluster(id string) *dotPCluster {
+	return &dotPCluster{
+		ID:    id,
+		Funcs: make([]*dotFCluster, 0),
+		Attrs: make(dotAttrs),
 	}
 }
 
-func (c *dotCluster) String() string {
-	return fmt.Sprintf("cluster_%s", c.ID)
+func (c *dotPCluster) String() string {
+	return fmt.Sprintf("cluster_p%s", c.ID)
+}
+
+// function
+
+type dotFCluster struct {
+	ID    string
+	NodeI *dotNode // identity node
+	Nodes []*dotNode
+	Attrs dotAttrs
+}
+
+func NewDotFCluster(id string) *dotFCluster {
+	return &dotFCluster{
+		ID:    id,
+		Nodes: make([]*dotNode, 0),
+		Attrs: make(dotAttrs),
+	}
+}
+
+func (c *dotFCluster) String() string {
+	return fmt.Sprintf("cluster_f%s", c.ID)
 }
 
 // ==[ type def/func: dotNode    ]===============================================
@@ -96,7 +125,7 @@ func (n *dotNode) String() string {
 // ==[ type def/func: dotEdge    ]===============================================
 type dotEdge struct {
 	From  *dotNode
-	To    *dotNode
+	To    *dotNode // identity node of func
 	Attrs dotAttrs
 }
 
@@ -121,18 +150,17 @@ func (p dotAttrs) Lines() string {
 
 // ==[ type def/func: dotGraph   ]===============================================
 type dotGraph struct {
-	Title   string
-	Minlen  uint
-	Attrs   dotAttrs
-	Cluster *dotCluster
-	Nodes   []*dotNode
-	Edges   []*dotEdge
-	Options map[string]string
+	Title    string
+	Minlen   uint
+	Attrs    dotAttrs
+	Clusters map[string]*dotPCluster
+	Edges    []*dotEdge
+	Options  map[string]string
 }
 
 func (g *dotGraph) WriteDot(w io.Writer) error {
 	t := template.New("dot")
-	for _, s := range []string{tmplCluster, tmplNode, tmplEdge, tmplGraph} {
+	for _, s := range []string{tmplCluster, tmplNode, tmplEdge, tmplGraph, tmplFCluster} {
 		if _, err := t.Parse(s); err != nil {
 			return err
 		}
@@ -143,14 +171,6 @@ func (g *dotGraph) WriteDot(w io.Writer) error {
 	}
 	_, err := buf.WriteTo(w)
 	return err
-}
-
-func dotToImage(outfname string, format string, dot []byte) (string, error) {
-	if *graphvizFlag {
-		return runDotToImageCallSystemGraphviz(outfname, format, dot)
-	}
-
-	return runDotToImage(outfname, format, dot)
 }
 
 // location of dot executable for converting from .dot to .svg

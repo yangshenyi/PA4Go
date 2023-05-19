@@ -26,6 +26,8 @@ type analysis struct {
 	worklist        nodeset // solver's worklist
 	reachable_queue []*funcnode
 	deltaSpace      []int
+	globalflushbuf  nodeset //clear global node prevptr on demand
+	flushSpace      []int
 
 	// result
 	callgraph map[*ssa.Function]map[ssa.CallInstruction]map[*ssa.Function]bool // a temp callgraph to efficiently reduce possible redundant edges
@@ -43,6 +45,7 @@ func Analyze(prog_ *ssa.Program, log_ io.Writer, paks []*ssa.Package, entry_func
 		flattenBuf: make(map[types.Type][]*subEleInfo),
 		csfuncobj:  make(map[ssa.Value]map[context]nodeid),
 		deltaSpace: make([]int, 0, 100),
+		flushSpace: make([]int, 0, 100),
 		nodes:      make([]*node, 0),
 	}
 

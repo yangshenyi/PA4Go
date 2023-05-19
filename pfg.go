@@ -1,7 +1,6 @@
 package pa
 
 import (
-	"bytes"
 	"fmt"
 	"go/types"
 
@@ -63,9 +62,7 @@ type node struct {
 // of a type T: the subelement's type and its path from the root of T.
 type subEleInfo struct {
 	typ types.Type
-
-	op   interface{} // *Array: true; *Tuple: int; *Struct: *types.Var; *Named: nil
-	tail *subEleInfo
+	op  interface{} // *Array: true; *Tuple: int; *Struct: *types.Var; *Named: nil
 }
 
 // ---------- Node creation ----------
@@ -98,7 +95,7 @@ func (a *analysis) addOneNode(typ types.Type, comment string, subelement *subEle
 	a.nodes = append(a.nodes, &node{typ: typ, sub_element: subelement, fly_solve: make([]rule, 0)})
 	if a.log != nil {
 		fmt.Fprintf(a.log, "\tcreate n%d %s for %s%s\n",
-			id, typ, comment, subelement.path())
+			id, typ, comment)
 	}
 	return id
 }
@@ -138,9 +135,9 @@ func (a *analysis) endObject(obj nodeid, func_node *funcnode, data interface{}) 
 	return o
 }
 
-// makeTagged creates a tagged object of type typ.
-func (a *analysis) makeTagged(typ types.Type, func_node *funcnode, data interface{}) nodeid {
-	obj := a.addOneNode(typ, "tagged.T", nil) // NB: type may be non-scalar!
+// creates a object pointed by a interface var
+func (a *analysis) makeInterfaceObj(typ types.Type, func_node *funcnode, data interface{}) nodeid {
+	obj := a.addOneNode(typ, "tagged.T", nil)
 	a.addNodes(typ, "tagged.v")
 	a.endObject(obj, func_node, data).tags |= otTagged
 	return obj
@@ -168,6 +165,17 @@ func (a *analysis) valueNode(v ssa.Value) nodeid {
 			a.worklist.add(id)
 		}
 		a.setValueNode(v, id, nil)
+	} else {
+		if _, ok := v.(*ssa.FreeVar); ok {
+			//a.globalflushbuf.add(id)
+			a.nodes[id].prev_pts.Clear()
+			a.worklist.add(nodeid(id))
+		}
+		if _, ok := v.(*ssa.Global); ok {
+			//a.globalflushbuf.add(id)
+			a.nodes[id].prev_pts.Clear()
+			a.worklist.add(nodeid(id))
+		}
 	}
 	return id
 }
@@ -227,7 +235,7 @@ func (a *analysis) objectNode(func_node *funcnode, v ssa.Value) nodeid {
 
 		case *ssa.MakeInterface:
 			tConc := v.X.Type()
-			obj = a.makeTagged(tConc, func_node, v)
+			obj = a.makeInterfaceObj(tConc, func_node, v)
 
 			// Copy the value into it, if nontrivial.
 			if x := a.valueNode(v.X); x != 0 {
@@ -403,7 +411,7 @@ func (a *analysis) flatten(t types.Type) []*subEleInfo {
 		case *types.Array:
 			fl = append(fl, &subEleInfo{typ: t}) // identity node
 			for _, fi := range a.flatten(t.Elem()) {
-				fl = append(fl, &subEleInfo{typ: fi.typ, op: true, tail: fi})
+				fl = append(fl, &subEleInfo{typ: fi.typ, op: true})
 			}
 
 		case *types.Struct:
@@ -411,7 +419,7 @@ func (a *analysis) flatten(t types.Type) []*subEleInfo {
 			for i, n := 0, t.NumFields(); i < n; i++ {
 				f := t.Field(i)
 				for _, fi := range a.flatten(f.Type()) {
-					fl = append(fl, &subEleInfo{typ: fi.typ, op: f, tail: fi})
+					fl = append(fl, &subEleInfo{typ: fi.typ, op: f})
 				}
 			}
 
@@ -426,7 +434,7 @@ func (a *analysis) flatten(t types.Type) []*subEleInfo {
 				for i := 0; i < n; i++ {
 					f := t.At(i)
 					for _, fi := range a.flatten(f.Type()) {
-						fl = append(fl, &subEleInfo{typ: fi.typ, op: i, tail: fi})
+						fl = append(fl, &subEleInfo{typ: fi.typ, op: i})
 					}
 				}
 			}
@@ -439,19 +447,4 @@ func (a *analysis) flatten(t types.Type) []*subEleInfo {
 	}
 
 	return fl
-}
-
-func (fi *subEleInfo) path() string {
-	var buf bytes.Buffer
-	for p := fi; p != nil; p = p.tail {
-		switch op := p.op.(type) {
-		case bool:
-			fmt.Fprintf(&buf, "[*]")
-		case int:
-			fmt.Fprintf(&buf, "#%d", op)
-		case *types.Var:
-			fmt.Fprintf(&buf, ".%s", op.Name())
-		}
-	}
-	return buf.String()
 }
