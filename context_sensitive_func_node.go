@@ -11,7 +11,7 @@ const level int = 1
 
 // selective context-sensitivity policy.
 func selectiveContextPolicy(fn *ssa.Function) bool {
-	return false
+	return true
 }
 
 type context struct {

@@ -183,26 +183,12 @@ package main
 
 import "fmt"
 
-func test_fp(func1 func(int)int){
-	var func2 func(int)
-
-	func2 = func(x int){
-		if x==0 {
-			return 
-		}		
-		func2(x-1)
-		_ = func1(5)
-	}
-	
-	func2(6)
-}
 
 
 func main() {
 	
-	test_fp(func(x int)int{ fmt.Println(x); return x+1})	
-
-	test_fp(func(x int)int{return x+1})	
+	a := [3]int{1,2,3}
+	fmt.Println(a[2])
 }
 `
 
@@ -244,21 +230,15 @@ func main() {
 const myprog_context = `
 package main
 
-import "fmt"
-
 type I interface {
-	f(map[string]int)
+	f()
 }
 
 type C struct{}
-func (C) f(m map[string]int) {
-	fmt.Println("C.f()")
-}
+func (C) f() {}
 
 type B struct{}
-func (B) f(m map[string]int) {
-	fmt.Println("B.f()")
-}
+func (B) f() {}
 
 func test_context(it I)I{
 	return it
@@ -266,13 +246,9 @@ func test_context(it I)I{
 
 func main() {
 	var i I = C{}
-	
-	x := map[string]int{"one":1}
-	test_context(i).f(x)
-
+	test_context(i).f()
 	i = B{}
-	test_context(i).f(x)
-
+	test_context(i).f()
 }
 `
 
@@ -282,16 +258,16 @@ package main
 import "fmt"
 
 type I interface {
-	f(map[string]int)
+	f()
 }
 
 type C struct{}
-func (C) f(m map[string]int) {
+func (C) f() {
 	fmt.Println("C.f()")
 }
 
 type B struct{}
-func (B) f(m map[string]int) {
+func (B) f() {
 	fmt.Println("B.f()")
 }
 
@@ -299,36 +275,36 @@ func test_context(it I)I{
 	return it
 }
 
-func wrap(it I) I {
+func wrap_again(it I) I {
 	return test_context(it)
 }
 
 func main() {
 	var i I = C{}
-	
-	x := map[string]int{"one":1}
-	wrap(i).f(x)
+	wrap_again(i).f()
 
 	i = B{}
-	wrap(i).f(x)
-
+	wrap_again(i).f()
 }
 `
 
 const myprog_field = `
 package main
 
-type C struct{fp func(int)int}
+import "fmt"
 
-func fc1(x int)int {return x+1}
-func fc2(x int)int {return x+2}
+type TestField struct{fp_a, fp_b func()}
+
+func fc1() { fmt.Println(1) }
+func fc2() { fmt.Println(2) }
+
 
 func main() {
-	c1 := C{fc1}
-	c2 := C{fc2}
+	t1 := TestField{fc1, fc2}
+	t2 := TestField{fc2, nil}
 	
-	_ = c1.fp(1)
-	_ = c2.fp(2)
-
+	t1.fp_a()
+	t1.fp_b()
+	t2.fp_a()
 }
 `
